@@ -1,5 +1,5 @@
 # 고기 레이더 — 1. 개발 준비
-> 상태: 작성 중
+> 상태: 사용자 확인 완료 (2026-11-10)
 > 입력: design/googi-radar/05-handoff.md, ui/, 01-direction.md, changelog.md / planning/googi-radar/03-spec.md, 02-decisions.md
 > 시험 실행: 1~2단계만 (2026-11-10)
 
