@@ -14,9 +14,11 @@ window.KMap = (function () {
     sdkPromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
       s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=' + encodeURIComponent(key) + '&libraries=services&autoload=false';
-      const timer = setTimeout(() => reject(new Error('timeout')), 10000);
+      let dead = false; // 시간이 지나 버린 시도는 늦게 불러와져도 무시 (다시 시도할 때 SDK가 두 번 실행되지 않게)
+      const timer = setTimeout(() => { dead = true; s.remove(); reject(new Error('timeout')); }, 10000);
       s.onerror = () => { clearTimeout(timer); reject(new Error('sdk-load')); };
       s.onload = () => {
+        if (dead) return;
         if (!window.kakao || !window.kakao.maps) { clearTimeout(timer); reject(new Error('sdk-missing')); return; }
         window.kakao.maps.load(() => { clearTimeout(timer); resolve(); });
       };
@@ -56,24 +58,29 @@ window.KMap = (function () {
   }
   function relayout() { if (map) map.relayout(); }
   function setCenter(p) { if (map) map.setCenter(new window.kakao.maps.LatLng(p.lat, p.lng)); }
+  function zoom(d) { if (map) map.setLevel(Math.min(10, Math.max(1, map.getLevel() + d)), { animate: true }); } // 확대·축소 버튼 (끌기 없이도 조작)
   function getCenter() { if (!map) return null; const c = map.getCenter(); return { lat: c.getLat(), lng: c.getLng() }; }
 
   function search() {
     if (!map) return;
     const k = window.kakao.maps, S = k.services.Status, ps = new k.services.Places();
     const my = ++seq, bounds = map.getBounds(), found = new Map();
-    let pending = KEYWORDS.length, errors = 0;
+    let pending = KEYWORDS.length, errors = 0, done = false;
     handlers.onSearchStart && handlers.onSearchStart();
+    const finish = () => {
+      if (done || my !== seq) return; done = true; clearTimeout(guard);
+      if (errors === KEYWORDS.length && !found.size) handlers.onError && handlers.onError('search');
+      else handlers.onResults && handlers.onResults([...found.values()]);
+    };
+    const guard = setTimeout(() => { errors = found.size ? errors : KEYWORDS.length; finish(); }, 10000); // 응답이 안 오면 10초 뒤 받은 것만으로 끝낸다
     KEYWORDS.forEach(q => {
       ps.keywordSearch(q, (data, status, pg) => {
-        if (my !== seq) return; // 더 새 검색이 시작됐으면 버린다
+        if (my !== seq || done) return; // 더 새 검색이 시작됐거나 이미 끝났으면 버린다
+        const first = !pg || pg.current === 1;
         if (status === S.OK) data.forEach(p => found.set(p.id, p));
-        else if (status === S.ERROR) errors++;
+        else if (status === S.ERROR && first) errors++; // 2쪽만 실패하면 1쪽 결과는 살린다
         if (status === S.OK && pg && pg.hasNextPage && pg.current < MAX_PAGES) { pg.nextPage(); return; }
-        if (--pending === 0) {
-          if (errors === KEYWORDS.length) handlers.onError && handlers.onError('search');
-          else handlers.onResults && handlers.onResults([...found.values()]);
-        }
+        if (--pending === 0) finish();
       }, { bounds, category_group_code: 'FD6' });
     });
   }
@@ -127,5 +134,5 @@ window.KMap = (function () {
     });
   }
 
-  return { init, ready, mount, relayout, setCenter, getCenter, search, setPins, updatePinFocus, findPlaces };
+  return { init, ready, mount, relayout, setCenter, getCenter, zoom, search, setPins, updatePinFocus, findPlaces };
 })();

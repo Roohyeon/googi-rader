@@ -81,11 +81,35 @@ const DEV = [
 ];
 const openq = text => ST.showNotes ? `<p class="openq">검토용 메모: ${text}</p>` : '';
 
-function toast(msg) { // 저절로 사라지지 않는다 (WCAG 2.2.1). 닫으면 알림을 띄운 요소로 포커스를 돌려준다
+// 알림: 4초 뒤 저절로 사라진다(사용자 요청 2026-11-10). 마우스를 올리거나 키보드로 알림 안에 있으면 그동안은 기다린다.
+// 닫기 버튼으로 바로 닫을 수도 있고, 닫으면 알림을 띄운 요소로 포커스를 돌려준다
+const TOAST_MS = 4000;
+let toastTimer = null;
+function hideToast(returnFocus) {
+  clearTimeout(toastTimer); toastTimer = null;
+  const el = document.getElementById('toast'); if (!el || !el.innerHTML) return;
+  const hadFocus = el.contains(document.activeElement);
+  el.classList.add('toast--out');
+  setTimeout(() => { el.innerHTML = ''; el.classList.remove('toast--out'); }, 180);
+  if (returnFocus || hadFocus) { const k = ST.toastFrom; const t = k && findKey(k); (t || document.getElementById('screen')).focus(); }
+  ST.toastFrom = null;
+}
+function armToast() { clearTimeout(toastTimer); toastTimer = setTimeout(() => hideToast(false), TOAST_MS); }
+function toast(msg) {
   const a = document.activeElement;
   ST.toastFrom = a && a.dataset ? { act: a.dataset.act, id: a.dataset.id || '', from: a.dataset.from || '' } : null;
-  document.getElementById('toast').innerHTML = `<span>${esc(msg)}</span><button type="button" data-act="closetoast">닫기<span class="sr-only"> (알림)</span></button>`;
+  const el = document.getElementById('toast');
+  el.classList.remove('toast--out');
+  el.innerHTML = `<span>${esc(msg)}</span><button type="button" data-act="closetoast">닫기<span class="sr-only"> (알림)</span></button>`;
+  armToast();
 }
+(function () { // 읽는 동안은 사라지지 않게
+  const el = document.getElementById('toast'); if (!el) return;
+  const pause = () => clearTimeout(toastTimer);
+  const resume = () => { if (el.innerHTML && !el.contains(document.activeElement)) armToast(); };
+  el.addEventListener('mouseenter', pause); el.addEventListener('mouseleave', resume);
+  el.addEventListener('focusin', pause); el.addEventListener('focusout', () => setTimeout(resume, 0));
+})();
 function toggleCmp(id) {
   const i = ST.cmpIds.indexOf(id);
   if (i >= 0) ST.cmpIds.splice(i, 1);
@@ -158,14 +182,14 @@ function pinView(f) { // 핀을 고르면 시트 안에 그 가게를 보여 준
   if (b) body = `<ul class="plain" role="list">${labelCard(s, b, 0, 'pin')}</ul>`;
   else body = `<div class="label label--plain"><div class="label__head"><h3 class="label__name">${nameTag(s)}</h3><span class="label__dist num">${distTxt(s)}</span>${s.gray ? '' : starBtn(s, 'pin')}</div>
     <div class="label__body"><p class="label__menu">${s.gray ? '정보 없음. 아직 메뉴를 확인하지 않은 가게예요.' : p.text === '필터 밖' ? '이 필터에 맞는 메뉴가 없어요.' : p.text}</p>
-    <div class="actions">${s.gray ? (LIVE && ST.authIn ? `<button class="btn btn--primary" type="button" data-act="newfor" data-id="${esc(s.id)}">이 가게 메뉴 입력하기</button>` : '') + kakaoLink(s) : detailBtn(s, 'pin')}</div></div></div>`;
+    <div class="actions">${s.gray ? (LIVE && ST.authIn && s.dbChecked ? `<button class="btn btn--primary" type="button" data-act="newfor" data-id="${esc(s.id)}">이 가게 메뉴 입력하기</button>` : '') + kakaoLink(s) : detailBtn(s, 'pin')}</div></div></div>`;
   return `<div class="sheet__title"><h2 id="sheet-title">선택한 가게</h2>${back}</div>${body}`;
 }
 function listView(f, visible) {
   const ranked = visible.filter(s => !s.gray).map(s => ({ s, b: bestMenu(s, f) })).filter(x => x.b).sort((a, b) => a.b.u.v - b.b.u.v);
   const nw = visible.filter(s => !s.gray && !bestMenu(s, f)).map(s => ({ s, ms: noWeight(s, f) })).filter(x => x.ms.length);
   ST.lastCount = ranked.length;
-  let h = `<div class="sheet__title"><h2 id="sheet-title">100g당 싼 순</h2><p>${f.part} ${f.type} ${f.origin} ${ranked.length}곳${ST.searching ? ' · 다시 찾는 중…' : ''}</p></div>`;
+  let h = `<div class="sheet__title"><h2 id="sheet-title">100g당 싼 순</h2><p>${esc(f.part)} ${esc(f.type)} ${esc(f.origin)} ${ranked.length}곳${ST.searching ? ' · 다시 찾는 중…' : ''}</p></div>`;
   if (ST.mapState === '빈 목록' || (!ranked.length && !nw.length)) {
     const n = visible.length;
     return h + `<div class="empty"><p>이 조건의 메뉴를 확인한 가게가 아직 없어요.</p><p>${LIVE ? (n ? `지도에 고기집 ${n}곳이 있지만 아직 메뉴를 확인하지 않았어요. 핀을 누르면 카카오맵 정보를 볼 수 있어요.` : '이 지도 안에서 고기집을 찾지 못했어요. 지도를 옮기거나 넓혀 보세요.') : '다른 부위나 종류를 골라 보세요.'}</p></div>`;
@@ -193,10 +217,13 @@ function viewMap() {
     sheet = `<div class="empty"><p>${msg}</p><div class="actions"><button class="btn btn--primary" type="button" data-act="area" data-area="juan">주안역 주변 보기</button><button class="btn" type="button" data-act="area" data-area="guwol">구월동 보기</button></div></div>`;
   } else if (st === '로딩') sheet = `<p class="loading" role="status">주변 고기집을 찾고 있어요…</p>`;
   else sheet = (st === '카카오 오류' ? `<div class="banner" role="status"><strong>지금은 가게 목록을 불러올 수 없어요. 확인해 둔 가게만 보여 드릴게요.</strong><button class="btn btn--sm" type="button" data-act="retry">다시 불러오기</button></div>` : '')
-    + (KEY_PROBLEM ? `<div class="banner" role="alert"><strong>${esc(KEY_PROBLEM)}</strong></div>`
+    + (KEY_PROBLEM ? `<div class="banner"${ST.keyAlerted ? '' : ' role="alert"'}><strong>${esc(KEY_PROBLEM)}</strong></div>`
       : NO_DB ? `<p class="banner banner--info" role="note">가격 정보는 아직 연결 전이에요. 지금은 지도에서 찾은 고기집만 보여요.</p>` : '')
     + (ST.dbError ? `<div class="banner" role="status"><strong>가격 정보를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.</strong><button class="btn btn--sm" type="button" data-act="retry">다시 불러오기</button></div>` : '')
     + (ST.pin && byId(ST.pin) ? pinView(f) : listView(f, visible));
+  if (KEY_PROBLEM) setTimeout(() => { ST.keyAlerted = true; }, 0);
+  const areabar = LIVE && st !== '위치 거부' && st !== '지역 밖' ? `<div class="areabar" role="group" aria-label="동네 바로가기">${[['juan', '주안역'], ['guwol', '구월동']].map(([k, l]) => `<button class="chipbtn" type="button" data-act="area" data-area="${k}" aria-pressed="${ST.area === k && ST.where !== '내 위치 주변'}">${l}</button>`).join('')}<button class="chipbtn" type="button" data-act="locate" aria-pressed="${ST.where === '내 위치 주변'}">내 위치</button></div>` : '';
+  sheet = areabar + sheet;
   const tray = ST.cmpIds.length ? `<div class="tray"><span>비교 ${ST.cmpIds.length}곳</span><button class="btn btn--primary btn--sm" type="button" data-act="tab" data-tab="cmp" data-from="tray">비교 보기</button></div>` : '';
   const sheetLabel = { peek: '목록 펼치기', half: '목록 더 펼치기', full: '목록 접기' }[ST.sheet];
   return `<div class="mapview">
@@ -206,7 +233,8 @@ function viewMap() {
       <button class="sheet__handle" type="button" data-act="sheet" aria-label="${sheetLabel}"><span aria-hidden="true"></span></button>
       <div class="sheet__body" id="sheet-body">${sheet}</div>${tray}
     </section>
-    <p class="sr-only" aria-live="polite" id="sheet-status">${ST.pin && byId(ST.pin) ? `${esc(byId(ST.pin).name)} 정보를 목록 자리에 보여 줘요` : ''}</p>
+
+    ${LIVE ? `<div class="mapctl" role="group" aria-label="지도 확대·축소"><button class="mapctl__btn" type="button" data-act="zoom" data-d="-1" aria-label="지도 확대">+</button><button class="mapctl__btn" type="button" data-act="zoom" data-d="1" aria-label="지도 축소">−</button></div>` : ''}
     ${LIVE ? `<section class="map map--kakao" aria-label="고기집 지도" id="map-host"></section>`
       : `<section class="map" aria-label="고기집 지도 (샘플)">${MAP_SVG}<span class="station" aria-hidden="true">주안역</span><div role="group" aria-label="지도 핀">${pins}</div></section>`}
     ${ST.fsheet ? filterSheet(f) : ''}
@@ -219,11 +247,11 @@ function pickerHtml(f) { // D29
   const cands = STORES.filter(s => !s.gray && !ST.cmpIds.includes(s.id)).map(s => ({ s, b: bestMenu(s, f) }))
     .sort((a, b) => (a.b ? a.b.u.v : 1e9) - (b.b ? b.b.u.v : 1e9));
   return `<section class="picker" id="picker" aria-labelledby="picker-title">
-    <div class="picker__head"><h2 id="picker-title">비교에 넣을 가게</h2><button class="btn btn--quiet btn--on-ink" type="button" data-act="picker" data-from="pickerhead" aria-expanded="true" aria-controls="picker">추가 목록 닫기</button></div>
+    <div class="picker__head"><h2 id="picker-title" tabindex="-1">비교에 넣을 가게</h2><button class="btn btn--quiet btn--on-ink" type="button" data-act="picker" data-from="pickerhead" aria-expanded="true" aria-controls="picker">추가 목록 닫기</button></div>
     ${full ? '<p class="err">최대 3곳까지 비교할 수 있어요. 한 곳을 빼고 넣어 주세요.</p>' : ''}
-    <p>${f.part} ${f.type} ${f.origin}, 100g당 싼 순. 정보 없음 가게는 넣을 수 없어요.</p>
+    <p>${esc(f.part)} ${esc(f.type)} ${esc(f.origin)}, 100g당 싼 순. 정보 없음 가게는 넣을 수 없어요.</p>
     ${cands.length ? `<ul role="list">${cands.map(x => `<li><span>${nameTag(x.s)} <span class="t-muted num">${distTxt(x.s)}</span><br><span class="t-muted">${x.b ? '100g당 ' + won(x.b.u.v) : '다른 메뉴만 있어요'}</span></span>
-      <button class="btn" type="button" data-act="cmp" data-id="${esc(x.s.id)}" data-from="picker" ${full ? 'disabled' : ''} aria-label="${esc(x.s.name)} 비교에 넣기">넣기</button></li>`).join('')}</ul>` : '<p>더 넣을 수 있는 가게가 없어요.</p>'}
+      <button class="btn" type="button" data-act="cmp" data-id="${esc(x.s.id)}" data-from="picker" ${full ? 'disabled' : ''} aria-label="넣기 (${esc(x.s.name)})">넣기</button></li>`).join('')}</ul>` : '<p>더 넣을 수 있는 가게가 없어요.</p>'}
   </section>`;
 }
 function trayChips() { // 담은 가게 칩 (× 로 빼기) + 가게 추가
@@ -309,8 +337,9 @@ function viewCmp() {
     <tbody>
     <tr><th scope="row">메뉴</th>${rows.map(r => `<td>${cell(r, r => esc(r.m.name) + `<br><span class="t-muted">${esc(r.m.part)} ${esc(r.m.type)}</span>` + (r.m.aged ? ' <span class="tag">숙성</span>' : ''))}</td>`).join('')}</tr>
     <tr><th scope="row">100g당</th>${rows.map(r => `<td>${cell(r, r => r.b ? `<span class="unit">${fmt(r.b.u.v)}<small>원</small></span>` : '알 수 없음<br><span class="t-muted">(중량 미표기)</span>')}</td>`).join('')}</tr>
-    <tr><th scope="row">1인분</th>${rows.map(r => `<td class="nowrap">${cell(r, r => { const m = r.m; return m.w && m.price ? `${m.w}g<br>${won(m.price)}` : m.price ? `-<br>${won(m.price)}` : '-'; })}</td>`).join('')}</tr>
+    <tr><th scope="row">1인분</th>${rows.map(r => `<td class="nowrap">${cell(r, r => { const m = r.m; return m.w && m.price ? `${esc(m.w)}g<br>${won(m.price)}` : m.price ? `-<br>${won(m.price)}` : '-'; })}</td>`).join('')}</tr>
     <tr><th scope="row">동네 대비</th>${rows.map(r => `<td class="nowrap">${cell(r, r => { if (!r.b || sise == null) return '-'; const p = (r.b.u.v - sise) / sise * 100; return `<span class="${p < 0 ? 'cheap' : 'pricey'}">${Math.abs(p).toFixed(1)}% ${p < 0 ? '저렴' : '비쌈'}</span>`; })}</td>`).join('')}</tr>
+    <tr><th scope="row">메모</th>${rows.map(r => `<td>${r.s.memo ? esc(r.s.memo) : '-'}</td>`).join('')}</tr>
     <tr><th scope="row">거리</th>${rows.map(r => `<td class="nowrap">${distTxt(r.s) || '-'}</td>`).join('')}</tr>
     <tr><th scope="row">확인일</th>${rows.map(r => `<td class="nowrap">${esc(r.s.checked || '-')}${r.s.checked && isStale(r.s) ? '<br>' + staleTag(r.s) : ''}</td>`).join('')}</tr>
     <tr><th scope="row">리뷰</th>${rows.map(r => `<td><a class="tlink" href="${esc(placeUrl(r.s))}" target="_blank" rel="noopener"><span translate="no">카카오맵</span><span class="sr-only"> ${esc(r.s.name)} 리뷰 보기 (새 창)</span></a></td>`).join('')}</tr>
@@ -324,22 +353,22 @@ function viewFav() {
   const list = Object.keys(ST.favs).filter(id => ST.favs[id]).map(byId).filter(Boolean);
   if (!list.length) return `<div class="screen-pad"><div class="empty"><p>아직 즐겨찾기한 가게가 없어요.</p><p>가게 라벨의 ☆를 누르면 여기에 모여요.</p><div class="actions"><button class="btn btn--primary" type="button" data-act="tab" data-tab="map" data-from="empty">목록으로 가기</button></div></div></div>`;
   const f = ST.filter;
-  return `<div class="screen-pad"><p class="screen-note">즐겨찾기는 이 폰에만 저장돼요. ${f.part} ${f.type} ${f.origin} 기준으로 보여 줘요.</p><ul class="plain" role="list">${list.map(s => { const b = bestMenu(s, f);
+  return `<div class="screen-pad">${ST.favErr ? '<div class="banner" role="status"><strong>즐겨찾기 가게의 가격 정보를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.</strong></div>' : ''}<p class="screen-note">즐겨찾기는 이 폰에만 저장돼요. ${esc(f.part)} ${esc(f.type)} ${esc(f.origin)} 기준으로 보여 줘요.</p><ul class="plain" role="list">${list.map(s => { const b = bestMenu(s, f);
     return b ? labelCard(s, b, 0, 'fav') : `<li class="label label--plain"><div class="label__head"><h3 class="label__name">${nameTag(s)}</h3><span class="label__dist num">${distTxt(s)}</span>${starBtn(s, 'fav')}</div><div class="label__body"><p class="label__menu">${s.gray ? '아직 메뉴를 확인하지 않은 가게예요.' : '이 필터에 맞는 메뉴가 없어요.'}</p><div class="actions">${detailBtn(s, 'fav')}</div></div></li>`; }).join('')}</ul></div>`;
 }
 
 // ---------- ④ 가게 상세 ----------
 function viewDetail() {
-  const s = byId(ST.detailId) || STORES[0];
+  const s = byId(ST.detailId);
   if (!s) return `<div class="screen-pad"><div class="empty"><p>가게 정보를 찾지 못했어요.</p><div class="actions"><button class="btn btn--primary" type="button" data-act="tab" data-tab="map" data-from="empty">목록으로 가기</button></div></div></div>`;
   const fav = !!ST.favs[s.id];
   const ranked = s.menus.filter(m => PARTS.includes(m.part) && TYPES.includes(m.type));
   const others = s.menus.filter(m => !ranked.includes(m));
   const line = m => { const u = unit(m);
-    const shown = [m.p100 != null ? `100g ${won(m.p100)}` : '', m.w ? `1인분 ${m.w}g` : '', m.price ? `${m.w ? '' : '1인분 '}${won(m.price)}` : ''].filter(Boolean).join(', ');
+    const shown = [m.p100 != null ? `100g ${won(m.p100)}` : '', m.w ? `1인분 ${esc(m.w)}g` : '', m.price ? `${m.w ? '' : '1인분 '}${won(m.price)}` : ''].filter(Boolean).join(', ');
     return `<li class="label"><div class="label__head"><h3 class="label__name">${esc(m.name)}</h3>${m.aged ? '<span class="tag tag--on-ink">숙성</span>' : ''}</div>
       <div class="label__body"><p class="label__menu"><span class="t-muted">${esc(m.part)} ${esc(m.type)} ${esc(m.origin)}</span></p>
-      <dl class="cells"><div><dt>중량</dt><dd>${m.w ? m.w + 'g' : '-'}</dd></div>
+      <dl class="cells"><div><dt>중량</dt><dd>${m.w ? esc(m.w) + 'g' : '-'}</dd></div>
       <div class="unit"><dt>100g당</dt><dd>${u ? `${fmt(u.v)}<small>원</small>` : '<small>중량 미표기</small>'}</dd></div>
       <div><dt>판매가</dt><dd>${m.price ? won(m.price) : '-'}</dd></div></dl>
       <p class="label__meta">메뉴판 표기: ${shown}</p>
@@ -353,7 +382,7 @@ function viewDetail() {
   if (ranked.length) h += `<h2 class="section-title">삼겹살·목살</h2><ul class="plain" role="list">${ranked.map(line).join('')}</ul>`;
   if (others.length) h += `<h2 class="section-title">다른 메뉴 <span class="t-muted">지도 순위에는 쓰지 않아요</span></h2><ul class="plain" role="list">${others.map(line).join('')}</ul>`;
   if (!s.menus.length) h += `<div class="empty"><p class="empty__title">아직 메뉴를 확인하지 않은 가게예요.</p><p>카카오맵에서 가게 정보를 볼 수 있어요.</p></div>`;
-  if (LIVE && ST.authIn) h += `<div class="admin-actions">${s.gray
+  if (LIVE && ST.authIn && s.dbChecked) h += `<div class="admin-actions">${s.gray
     ? `<button class="btn btn--primary" type="button" data-act="newfor" data-id="${esc(s.id)}">이 가게 메뉴 입력하기</button>`
     : `<button class="btn btn--primary" type="button" data-act="editstore" data-id="${esc(s.id)}">수정하기<span class="sr-only"> (${esc(s.name)})</span></button>`}<span class="t-muted">운영자만 보여요</span></div>`;
   if (LIVE && ST.authIn && !s.gray) h += adminPhoto(s);
@@ -378,8 +407,8 @@ function newForm(preset) { // 빈 입력창. preset: 가게 상세의 "메뉴 �
   ST.form = { edit: false, store: pick, area: guessArea(byId(pick)), areaTouched: false, memo: '', date: C.kstDate(new Date()), menus: [blankMenu()], removed: [] };
   ST.dirty = false; ST.found = null; ST.findMsg = ''; ST.findQ = ''; ST.formMsg = null;
 }
-function editForm(id) { // 이미 입력한 가게 고치기: 저장된 값을 채워서 연다
-  const r = (ST.adminStores || []).find(x => x.kakaoId === id), s = byId(id);
+function editForm(id, fromStore) { // 이미 입력한 가게 고치기: 저장된 값을 채워서 연다
+  const r = fromStore ? null : (ST.adminStores || []).find(x => x.kakaoId === id), s = byId(id);
   const src = r || s; if (!src) return false;
   if (!s) KNOWN.set(id, { id, name: src.name, menus: src.menus, gray: false, checked: src.checked, memo: src.memo, area: src.area, dist: null });
   const str = v => v == null ? '' : String(v);
@@ -406,7 +435,9 @@ function checkMenu(M) { // D26-9, R9 (메뉴 하나)
   }
   if (p100 == null && price == null) return { err: '중량만으로는 비교할 수 없어요. 1인분 가격도 넣어 주세요.', fields: ['price'], fieldErr: { price: '1인분 가격: 중량만으로는 비교할 수 없어요. 1인분 가격도 넣어 주세요.' } };
   // DB 제한과 같은 범위 (01-schema.sql)
-  if ((p100 != null && p100 > 1000000) || (w != null && w > 5000) || (price != null && price > 10000000)) return { err: '값이 너무 커요. 100g당 100만 원, 중량 5,000g, 가격 1,000만 원 이하로 넣어 주세요.', fields: ['p100'] };
+  const big = [['p100', p100, 1000000, '100만 원'], ['w', w, 5000, '5,000g'], ['price', price, 10000000, '1,000만 원']].filter(([, v, max]) => v != null && v > max);
+  if (big.length) { const fe = {}; big.forEach(([k, , , lim]) => { fe[k] = `${FIELD_LABEL[k]}: ${lim} 이하로 넣어 주세요.`; });
+    return { err: `${big.map(([k]) => FIELD_LABEL[k]).join(', ')} 값이 너무 커요.`, fields: big.map(([k]) => k), fieldErr: fe }; }
   if (String(M.name || '').length > 60) return { err: '메뉴 이름은 60자까지 넣을 수 있어요.', fields: ['mname'] };
   const u = unit({ p100, w: w && price ? w : null, price: w && price ? price : (p100 == null ? price : null) });
   if (!u) return { info: '중량이 없어 100g당 가격을 계산할 수 없어요. “중량 미표기”로 저장돼요.' };
@@ -414,7 +445,13 @@ function checkMenu(M) { // D26-9, R9 (메뉴 하나)
 }
 function checkForm() { // 저장 전 전체 검사. 첫 번째 문제만 알려 주고 그 칸으로 포커스
   const F = ST.form;
-  if (!byId(F.store)) return { err: '메뉴를 입력할 가게를 골라 주세요.', focus: '#store' };
+  const storeFocus = document.getElementById('store') && document.getElementById('store').tagName === 'SELECT' ? '#store' : '#find';
+  if (!byId(F.store)) return { err: '메뉴를 입력할 가게를 골라 주세요.', focus: storeFocus };
+  if (LIVE && !F.edit && !byId(F.store).dbChecked) return { err: '이 가게의 입력 기록을 아직 확인하지 못했어요. 인터넷 연결을 확인하고 지도를 다시 불러온 뒤 저장해 주세요.', focus: storeFocus };
+  const today = C.kstDate(new Date());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(F.date || ''))) return { err: '메뉴 확인일을 넣어 주세요.', focus: '#date' };
+  if (F.date > today) return { err: '메뉴 확인일은 오늘보다 뒤일 수 없어요.', focus: '#date' };
+  if (F.date < '2020-01-01') return { err: '메뉴 확인일이 너무 오래됐어요. 2020년 이후 날짜를 넣어 주세요.', focus: '#date' };
   if (String(F.memo || '').length > 200) return { err: '메모는 200자까지 넣을 수 있어요.', focus: '#memo' };
   for (let i = 0; i < F.menus.length; i++) {
     const c = checkMenu(F.menus[i]);
@@ -446,12 +483,14 @@ function menuRow(M, i, n) {
   </fieldset>`;
 }
 function viewLogin() { // 운영자 로그인 (D26-4, P-3: 이메일+비밀번호, 운영자 1명)
-  const m = ST.loginMsg;
+  const m = ST.loginMsg, why = ST.formMsg && !ST.formMsg.ok ? ST.formMsg.text : '';
+  const inv = ST.loginMsg ? ' aria-invalid="true" aria-describedby="login-msg"' : '';
   return `<div class="screen-pad"><form class="card form login" data-act="signin" novalidate>
     <h2 class="card__title">운영자 로그인</h2>
     <p class="hint">메뉴 입력은 운영자만 할 수 있어요.</p>
-    ${field('email', '이메일', `<input id="email" name="email" type="email" autocomplete="username" required spellcheck="false" maxlength="200">`)}
-    ${field('pw', '비밀번호', `<input id="pw" name="password" type="password" autocomplete="current-password" required maxlength="200">`)}
+    ${why ? `<p class="msg msg--err" role="status">${esc(why)}</p>` : ''}
+    ${field('email', '이메일', `<input id="email" name="email" type="email" autocomplete="username" required spellcheck="false" maxlength="200" value="${esc(ST.loginEmail || '')}"${inv}>`)}
+    ${field('pw', '비밀번호', `<input id="pw" name="password" type="password" autocomplete="current-password" required maxlength="200"${inv}>`)}
     <button class="btn btn--primary btn--block" type="submit" ${ST.busy ? 'disabled' : ''}>${ST.busy ? '로그인하는 중…' : '로그인'}</button>
     ${m ? `<p id="login-msg" class="msg msg--err" role="alert" tabindex="-1">${esc(m)}</p>` : ''}
     <p class="hint">공용 컴퓨터나 남의 폰에서는 입력이 끝나면 꼭 로그아웃해 주세요.</p>
@@ -459,6 +498,7 @@ function viewLogin() { // 운영자 로그인 (D26-4, P-3: 이메일+비밀번�
 }
 function ratioText() { // R14: 상권별 중량 표기 비율 (D26-8, D28-9). 실서비스는 DB의 전체 가게로 센다
   const all = LIVE ? (ST.adminStores || []) : STORES.filter(s => !s.gray).map(s => ({ ...s, area: '주안' }));
+  if (LIVE && ST.adminErr) return '<p class="t-muted">입력한 가게 목록을 불러오지 못해 비율을 계산할 수 없어요.</p>';
   if (LIVE && !ST.adminStores) return '불러오는 중…';
   const rows = ['주안', '구월', '기타'].map(a => {
     const entered = all.filter(s => s.area === a && s.menus.some(m => ['삼겹살', '목살'].includes(m.part)));
@@ -468,17 +508,19 @@ function ratioText() { // R14: 상권별 중량 표기 비율 (D26-8, D28-9). �
   return rows.length ? `<ul class="ratio">${rows.join('')}</ul>` : '<p class="t-muted">아직 확인한 가게가 없어요. 메뉴를 입력하면 여기에 비율이 나와요.</p>';
 }
 function storeOptions(F) { // 아직 입력하지 않은 가게만 (입력한 가게는 "수정하기"로만 고친다)
-  const list = STORES.filter(s => s.gray); const cur = byId(F.store);
-  if (cur && cur.gray && !list.includes(cur)) list.unshift(cur);
+  const ok = s => s.gray && (!LIVE || s.dbChecked); // 실제 모드: DB에 입력 기록이 없다고 확인된 가게만
+  const list = STORES.filter(ok); const cur = byId(F.store);
+  if (cur && ok(cur) && !list.includes(cur)) list.unshift(cur);
   return list;
 }
 function enteredList() { // 운영자: 입력한 가게 목록 + 수정하기
   if (!LIVE) return '';
+  if (ST.adminErr) return `<section class="card"><h2 class="card__title">입력한 가게</h2><p class="msg msg--err">입력한 가게 목록을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.</p><div class="actions"><button class="btn" type="button" data-act="reloadadmin">다시 불러오기</button></div></section>`;
   if (!ST.adminStores) return `<section class="card"><h2 class="card__title">입력한 가게</h2><p class="t-muted">불러오는 중…</p></section>`;
   const list = ST.adminStores.slice().sort((a, b) => String(b.checked).localeCompare(String(a.checked)));
   return `<section class="card" aria-labelledby="sec-entered"><div class="card__head"><h2 class="card__title" id="sec-entered">입력한 가게 <span class="count">${list.length}</span></h2></div>
     ${list.length ? `<ul class="entered" role="list">${list.slice(0, 100).map(s => `<li><span class="entered__text"><strong>${esc(s.name)}</strong><span class="t-muted">${esc(s.area)} · 메뉴 ${s.menus.length}개 · ${esc(s.checked)}</span></span>
-      <button class="btn btn--sm" type="button" data-act="editstore" data-id="${esc(s.kakaoId)}">수정하기<span class="sr-only"> (${esc(s.name)})</span></button></li>`).join('')}</ul>` : '<p class="t-muted">아직 입력한 가게가 없어요.</p>'}
+      <button class="btn btn--sm" type="button" data-act="editstore" data-id="${esc(s.kakaoId)}">수정하기<span class="sr-only"> (${esc(s.name)})</span></button></li>`).join('')}</ul>${list.length > 100 ? `<p class="hint">최근 100곳만 보여 줘요. 나머지는 지도에서 가게를 눌러 수정할 수 있어요.</p>` : ''}${list.length >= 500 ? '<p class="hint">가게가 500곳을 넘어 일부만 셌어요.</p>' : ''}` : '<p class="t-muted">아직 입력한 가게가 없어요.</p>'}
   </section>`;
 }
 function viewAdmin() {
@@ -487,12 +529,13 @@ function viewAdmin() {
   if (!LIVE && ST.adminState === '로그인 전') {
     return `<div class="screen-pad"><div class="empty"><p>메뉴 입력은 운영자만 할 수 있어요.</p><div class="actions"><button class="btn btn--primary" type="button" data-act="login">운영자로 로그인</button></div></div></div>`;
   }
+  if (!ST.form && LIVE && ST.screen === 'admin' && ST.loadingEdit) return `<div class="screen-pad"><p class="loading">가게 기록을 불러오는 중…</p></div>`;
   if (!ST.form) newForm();
   const F = ST.form, n = F.menus.length, opts = storeOptions(F);
   const found = ST.found && ST.found.length ? `<ul class="found" role="list">${ST.found.map(p => `<li><button type="button" class="found__item" data-act="pickstore" data-id="${esc(p.id)}"><strong>${esc(p.place_name)}</strong><span>${esc(p.road_address_name || p.address_name || '')}</span></button></li>`).join('')}</ul>` : '';
   const storeSel = opts.length
-    ? `<select id="store" name="store" data-field="store" autocomplete="off"><option value="" ${F.store ? '' : 'selected'}>가게를 골라 주세요</option>${opts.map(s => `<option value="${esc(s.id)}" ${F.store === s.id ? 'selected' : ''}>${esc(s.name)}${distTxt(s) ? ' · ' + distTxt(s) : ''}</option>`).join('')}</select>`
-    : `<p class="t-muted" id="store">지도에 아직 입력하지 않은 가게가 없어요. 위에서 이름으로 찾아 주세요.</p>`;
+    ? `<select id="store" name="store" data-field="store" autocomplete="off" aria-invalid="${!!(ST.formMsg && !ST.formMsg.ok && /#store/.test(ST.formMsg.focus || ''))}" aria-describedby="form-msg"><option value="" ${F.store ? '' : 'selected'}>가게를 골라 주세요</option>${opts.map(s => `<option value="${esc(s.id)}" ${F.store === s.id ? 'selected' : ''}>${esc(s.name)}${distTxt(s) ? ' · ' + distTxt(s) : ''}</option>`).join('')}</select>`
+    : `<p class="t-muted">지도에 아직 입력하지 않은 가게가 없어요. 위에서 이름으로 찾아 주세요.</p>`;
   const editStore = F.edit ? byId(F.store) : null;
   const msg = ST.formMsg ? `<p id="form-msg" class="msg ${ST.formMsg.ok ? 'msg--ok' : 'msg--err'}" role="${ST.formMsg.ok ? 'status' : 'alert'}" tabindex="-1">${esc(ST.formMsg.text)}</p>` : '';
   return `<div class="screen-pad stack">
@@ -508,7 +551,7 @@ function viewAdmin() {
         ${LIVE ? `<div class="field"><label for="find">가게 이름으로 찾기</label>
           <div class="searchrow"><input id="find" type="search" placeholder="예: 마포주먹고기" autocomplete="off" maxlength="50" value="${esc(ST.findQ || '')}" enterkeyhint="search"><button class="btn" type="button" data-act="storesearch">찾기</button></div>
           ${ST.findMsg ? `<p class="hint" role="status">${esc(ST.findMsg)}</p>` : ''}${found}</div>` : ''}
-        ${field('store', '메뉴를 입력할 가게', storeSel)}
+        ${opts.length ? field('store', '메뉴를 입력할 가게', storeSel) : `<div class="field"><span class="field__label">메뉴를 입력할 가게</span>${storeSel}</div>`}
         ${LIVE ? field('area', '상권', `<select id="area" name="area" data-field="area" autocomplete="off" aria-describedby="area-hint">${['주안', '구월', '기타'].map(a => `<option ${F.area === a ? 'selected' : ''}>${a}</option>`).join('')}</select>`, '주안역·구월동 로데오거리에서 1km 안이면 자동으로 골라져요.') : ''}
       </section>`}
       <section class="card form-section" aria-labelledby="sec-menu">
@@ -539,13 +582,19 @@ function viewAdmin() {
 const SAVE_FAIL = '저장하지 못했어요. 인터넷 연결을 확인하고 다시 저장해 주세요. 입력한 내용은 그대로 있어요.';
 function saveErrorText(e) { // DB가 거부한 이유를 사람 말로 (키·토큰 같은 값은 보여 주지 않음)
   const code = String((e && e.code) || ''), msg = String((e && e.message) || '');
-  if (code === '42501' || /row-level security|permission denied/i.test(msg)) return '이 계정은 운영자로 등록되지 않아 저장할 수 없어요.';
+  if (/already entered/i.test(msg)) return '이미 입력한 가게예요. 아래 "입력한 가게"에서 수정하기로 고쳐 주세요.';
+  if (code === 'PGRST202' || /could not find the function/i.test(msg)) return 'DB 업데이트가 필요해요. dev/googi-radar/sql/06-safe-save.sql을 SQL Editor에서 실행해 주세요.';
+  if (code === 'P0002' || /store not found/i.test(msg)) return '이 가게를 DB에서 찾지 못했어요. 새로 입력해 주세요.';
+  if (code === '42501' || code === 'PGRST116' || /row-level security|permission denied|not allowed/i.test(msg)) return '이 계정은 운영자로 등록되지 않아 저장할 수 없어요.';
+  if (code === '22007' || code === '22008' || /bad-date/.test(msg)) return '메뉴 확인일을 확인해 주세요.';
   if (/JWT|expired|not authenticated|401/i.test(msg + code)) return '로그인이 끝났어요. 다시 로그인한 뒤 저장해 주세요. 입력한 내용은 그대로 있어요.';
   if (code === '23514' || code === '22001') return '입력한 값이 허용 범위를 벗어났어요. 숫자와 글자 수, 부위를 확인해 주세요.';
   return SAVE_FAIL;
 }
 const toMenu = M => { const num = x => x === '' ? null : Number(x); return { id: M.id || null, name: M.name || M.part, part: M.part, type: M.type, aged: M.aged, origin: M.origin, p100: num(M.p100), w: num(M.price) ? num(M.w) : null, price: num(M.price) }; };
 async function saveLive() {
+  try { if (!(await DB.session())) { ST.authIn = false; ST.formMsg = { ok: false, text: '로그인이 끝났어요. 다시 로그인한 뒤 저장해 주세요. 입력한 내용은 그대로 있어요.' }; return null; } }
+  catch (e) { /* 세션 확인 실패는 저장 시도에서 다시 걸러진다 */ }
   const c = checkForm();
   if (c.err) { ST.formMsg = { ok: false, text: c.err, focus: c.focus }; ST.dirty = true; return; }
   const pp = DB.photoProblem(ST.formPhoto);
@@ -560,12 +609,17 @@ async function saveLive() {
     mergeDb(); mergeOne(s); loadAdminStores();
     return r.photoFailed ? `${done} 사진은 올리지 못했어요.` : done; // 성공하면 알림 문구를 돌려준다
   } catch (e) {
-    ST.formMsg = { ok: false, text: saveErrorText(e) };
+    let text = saveErrorText(e);
+    if (/운영자로 등록되지 않아/.test(text)) { try { if (!(await DB.session())) text = '로그인이 끝났어요. 다시 로그인한 뒤 저장해 주세요. 입력한 내용은 그대로 있어요.'; } catch (e2) { /* 그대로 */ } }
+    ST.formMsg = { ok: false, text };
     if (/로그인이 끝났어요/.test(ST.formMsg.text)) ST.authIn = false;
     return null;
   }
 }
-async function loadAdminStores() { try { ST.adminStores = await DB.allStores(); } catch (e) { ST.adminStores = []; } if (ST.screen === 'admin') render(); }
+async function loadAdminStores() {
+  try { ST.adminStores = await DB.allStores(); ST.adminErr = false; } catch (e) { ST.adminStores = null; ST.adminErr = true; }
+  if (ST.screen === 'admin') bgRender();
+}
 function save() { // 샘플 모드(?demo=1): 메모리에만 저장
   const c = checkForm();
   if (c.err) { ST.formMsg = { ok: false, text: c.err, focus: c.focus }; ST.dirty = true; return; }
@@ -578,11 +632,12 @@ function save() { // 샘플 모드(?demo=1): 메모리에만 저장
   return done;
 }
 function adminPhoto(s) { // 운영자에게만: 저장된 메뉴판 사진 (D28-12, 사용자 결정 2026-11-10 "운영자만")
+  if (ST.photoAt && ST.photoAt[s.id] && Date.now() - ST.photoAt[s.id] > 9 * 60 * 1000) delete ST.photos[s.id]; // 10분짜리 주소가 끝나기 전에 새로
   const v = ST.photos[s.id];
   if (v === undefined) {
-    ST.photos[s.id] = 'loading';
-    DB.photoUrl(s.id).then(u => { ST.photos[s.id] = u || 'none'; }).catch(() => { ST.photos[s.id] = 'err'; })
-      .finally(() => { if (ST.screen === 'detail' && ST.detailId === s.id) render(); });
+    ST.photos[s.id] = 'loading'; ST.photoAt = ST.photoAt || {};
+    DB.photoUrl(s.id).then(u => { ST.photos[s.id] = u || 'none'; ST.photoAt[s.id] = Date.now(); }).catch(() => { ST.photos[s.id] = 'err'; })
+      .finally(() => { if (ST.screen === 'detail' && ST.detailId === s.id) bgRender(); });
   }
   const body = v === 'none' ? '<p class="t-muted">저장된 사진이 없어요.</p>' : v === 'err' ? '<p class="t-muted">사진을 불러오지 못했어요.</p>'
     : v && v !== 'loading' ? `<a class="photo-link" href="${esc(v)}" target="_blank" rel="noopener"><img class="photo" src="${esc(v)}" alt="${esc(s.name)} 메뉴판 사진"><span class="sr-only"> (크게 보기, 새 창)</span></a>` : '<p class="t-muted">불러오는 중…</p>';
@@ -593,20 +648,37 @@ function adminPhoto(s) { // 운영자에게만: 저장된 메뉴판 사진 (D28-
 const TITLES = { map: ['고기 레이더', '주안역 주변'], cmp: ['비교', ''], fav: ['즐겨찾기', ''], detail: ['', ''], admin: ['운영자 입력', ''] };
 function focusKey() {
   const a = document.activeElement;
-  if (!a || !a.dataset || !a.dataset.act) return null;
-  return { act: a.dataset.act, id: a.dataset.id || '', tab: a.dataset.tab || '', from: a.dataset.from || '' };
+  if (!a || a === document.body) return null;
+  const sel = typeof a.selectionStart === 'number' ? [a.selectionStart, a.selectionEnd] : null;
+  if (a.id && !(a.dataset && a.dataset.act)) return { elId: a.id, sel }; // 입력칸 등: id로 다시 찾는다
+  if (!a.dataset || !a.dataset.act) return null;
+  return { act: a.dataset.act, id: a.dataset.id || '', tab: a.dataset.tab || '', from: a.dataset.from || '', k: a.dataset.k || '' };
 }
 function findKey(key) {
   let sel = `[data-act="${key.act}"]`;
   if (key.id) sel += `[data-id="${esc(key.id)}"]`;
   if (key.tab) sel += `[data-tab="${key.tab}"]`;
+  if (key.k) sel += `[data-k="${key.k}"]`;
   return (key.from && document.querySelector(`${sel}[data-from="${key.from}"]`)) || document.querySelector(sel);
 }
 function restoreFocus(key, fallback) {
   if (!key) return;
-  const el = findKey(key) || (fallback && document.querySelector(fallback)) || document.getElementById('screen');
+  if (key.elId) {
+    const el = document.getElementById(key.elId);
+    if (el) { el.focus(); if (key.sel && typeof el.setSelectionRange === 'function') { try { el.setSelectionRange(key.sel[0], key.sel[1]); } catch (e) { /* 일부 입력 종류는 지원 안 함 */ } } return; }
+  }
+  const el = (key.act && findKey(key)) || (fallback && document.querySelector(fallback)) || document.getElementById('screen');
   if (el) el.focus();
 }
+let composing = false;
+document.addEventListener('compositionstart', () => { composing = true; });
+document.addEventListener('compositionend', () => { composing = false; });
+const typing = () => { const a = document.activeElement; return composing || (!!a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) && !!a.closest('#screen')); };
+function bgRender() { // 네트워크 결과처럼 사용자가 시키지 않은 다시 그리기
+  if (typing()) { ST.pendingRender = true; return; }
+  ST.pendingRender = false; render();
+}
+document.addEventListener('focusout', () => { setTimeout(() => { if (ST.pendingRender && !typing()) { ST.pendingRender = false; render(); } }, 0); });
 function render(opts) {
   opts = opts || {};
   const key = opts.focusMain ? null : focusKey();
@@ -617,12 +689,21 @@ function render(opts) {
   document.title = scr === 'map' ? '고기 레이더' : `${t[0]} - 고기 레이더`;
   const back = document.getElementById('back');
   back.hidden = !(scr === 'detail' || scr === 'admin');
-  document.getElementById('back-label').textContent = scr === 'admin' ? '돌아가기' : '목록으로';
+  document.getElementById('back-label').textContent = scr === 'admin' ? '돌아가기' : ({ cmp: '비교로', fav: '즐겨찾기로' })[ST.prev] || '목록으로';
   const main = document.getElementById('screen');
   const entering = scr !== ST.lastScr && scr !== 'map'; ST.lastScr = scr;
   main.className = 'screen' + (scr === 'map' ? ' screen--map' : '') + (entering ? ' screen--enter' : '');
-  main.innerHTML = !DEMO && !LIVE ? viewSetup() : ({ map: viewMap, cmp: viewCmp, fav: viewFav, detail: viewDetail, admin: viewAdmin })[scr]();
-  if (LIVE && scr === 'map') livePins();
+  try {
+    main.innerHTML = !DEMO && !LIVE ? viewSetup() : ({ map: viewMap, cmp: viewCmp, fav: viewFav, detail: viewDetail, admin: viewAdmin })[scr]();
+    if (LIVE && scr === 'map') livePins();
+  } catch (e) { // 데이터 하나가 이상해도 화면 전체가 멈추지 않게
+    console.error('화면 그리기 오류:', e && e.message);
+    main.innerHTML = `<div class="screen-pad"><div class="empty"><p class="empty__title">화면을 그리다 문제가 생겼어요.</p><p>새로고침해 주세요. 계속되면 다른 탭으로 옮겨 보세요.</p></div></div>`;
+  }
+  // 아래 선택지가 열려 있으면 뒤쪽은 건드릴 수 없게 (접근성 2.4.3·4.1.2: 모바일 화면 읽기 프로그램이 밖으로 나가지 않게)
+  const modal = scr === 'map' && !!ST.fsheet;
+  document.querySelectorAll('.appbar, .tabbar').forEach(el => { el.inert = modal; });
+  if (modal) document.querySelectorAll('.mapview > :not(.fsheet-layer)').forEach(el => { el.inert = true; });
   document.querySelectorAll('.tabbar button').forEach(b => {
     const on = b.dataset.tab === scr || (scr === 'detail' && b.dataset.tab === ST.prev);
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -677,10 +758,15 @@ document.addEventListener('click', e => {
     case 'tab': go(el.dataset.tab); render({ focusMain: true }); return;
     case 'menu': ST.menuOpen = !ST.menuOpen; render({ focus: ST.menuOpen ? '#menu-list button' : '#menu-btn' }); return;
     case 'admin': go('admin'); if (LIVE && ST.authIn && !ST.adminStores) loadAdminStores(); if (!ST.form) newForm(); render({ focusMain: true }); return;
-    case 'pin': ST.pin = ST.pin === id ? null : id; if (ST.pin && ST.sheet === 'peek') ST.sheet = 'half'; break;
+    case 'pin': ST.pin = ST.pin === id ? null : id; if (ST.pin && ST.sheet === 'peek') ST.sheet = 'half'; render(); if (ST.pin && byId(ST.pin)) announce(`${byId(ST.pin).name} 정보를 목록 자리에 보여 줘요`); return;
     case 'closepin': { const was = ST.pin; ST.pin = null; render({ focus: `[data-act="pin"][data-id="${esc(was)}"]` }); return; }
     case 'sheet': ST.sheet = SHEET_NEXT[ST.sheet]; break;
-    case 'cmp': toggleCmp(id); render({ fallback: el.dataset.from === 'chip' ? '[data-act="picker"][data-from="add"]' : '#cmp-table caption' }); return;
+    case 'cmp': {
+      const had = ST.cmpIds.includes(id), from = el.dataset.from; toggleCmp(id); const now = ST.cmpIds.includes(id), s = byId(id);
+      if (from === 'picker') { render({ focus: now ? '#picker [data-act="cmp"]:not([disabled])' : null }); if (now && !document.querySelector('#picker [data-act="cmp"]:not([disabled])')) { const h = document.getElementById('picker-title'); if (h) h.focus(); } }
+      else render({ fallback: from === 'chip' ? '[data-act="picker"][data-from="add"]' : '#cmp-table caption' });
+      if (had !== now && s) announce(`${s.name}${now ? '을(를) 비교에 넣었어요' : '을(를) 비교에서 뺐어요'}. 지금 ${ST.cmpIds.length}곳`);
+      return; }
     case 'detail': ST.detailId = id; ST.screen = 'detail'; ST.pin = null; ST.menuOpen = false; render({ focusMain: true }); return;
     case 'fav': ST.favs[id] = !ST.favs[id]; saveFavs(); break;
     case 'addmenu': { const ms = ST.form.menus; if (ms.length >= 20) return; ms.push(blankMenu(ms[ms.length - 1])); ST.formMsg = null; render({ focus: `#mname-${ms.length - 1}` }); return; }
@@ -690,28 +776,56 @@ document.addEventListener('click', e => {
     case 'pickstore': {
       const pl = (ST.found || []).find(x => x.id === id); if (!pl) return;
       const s = fromPlace(pl); ST.found = null; ST.findMsg = '확인하는 중…'; render({ focus: '#find' });
-      mergeOne(s).then(() => {
-        if (!s.gray && editForm(s.id)) { ST.formNote = '이미 입력한 가게라 수정 화면으로 열었어요.'; render({ focus: '#area' }); return; }
+      const pickSeq = ST.pickSeq = (ST.pickSeq || 0) + 1;
+      mergeOne(s, true).then(ok => {
+        if (!ST.form || ST.screen !== 'admin' || pickSeq !== ST.pickSeq) return; // 그 사이 로그아웃·화면 이동·다른 가게 선택
+        if (!ok) { ST.findMsg = '이 가게의 입력 기록을 확인하지 못했어요. 인터넷 연결을 확인하고 다시 골라 주세요.'; render({ focus: '#find' }); announce(ST.findMsg); return; }
+        if (!s.gray) {
+          if (ST.dirty && !window.confirm(`${s.name}은(는) 이미 입력한 가게예요. 쓰던 내용을 지우고 수정 화면으로 열까요?`)) {
+            ST.findMsg = `${s.name}은(는) 이미 입력한 가게예요. 수정하려면 아래 "입력한 가게"에서 수정하기를 눌러 주세요.`; render({ focus: '#find' }); announce(ST.findMsg); return;
+          }
+          if (editForm(s.id, true)) { ST.formNote = '이미 입력한 가게라 수정 화면으로 열었어요.'; render({ focus: '#area' }); return; }
+        }
         ST.form.store = s.id; if (!ST.form.areaTouched) ST.form.area = guessArea(s);
-        ST.findMsg = `${pl.place_name}을(를) 골랐어요.`; render({ focus: '#store' });
+        ST.findMsg = `${pl.place_name}을(를) 골랐어요.`; render({ focus: '#store' }); announce(ST.findMsg);
       }); return; }
-    case 'editstore': go('admin'); if (!editForm(id)) { newForm(); } ST.formNote = ''; render({ focusMain: true }); return;
+    case 'editstore':
+      if (ST.screen === 'admin' && ST.dirty && !window.confirm('입력하던 내용이 사라져요. 이 가게를 수정할까요?')) return;
+      if (LIVE && !NO_DB) {
+        go('admin'); ST.form = null; ST.formNote = ''; ST.loadingEdit = true; render({ focusMain: true });
+        const s = byId(id) || { id, name: ((ST.adminStores || []).find(x => x.kakaoId === id) || {}).name || '', menus: [], gray: true };
+        KNOWN.set(id, s);
+        mergeOne(s, true).then(ok => {
+          ST.loadingEdit = false;
+          if (ST.screen !== 'admin') return;
+          if (!ok || s.gray || !editForm(id, true)) { newForm(); ST.formMsg = { ok: false, text: ok ? '이 가게의 입력 기록이 없어요. 새로 입력해 주세요.' : '최신 기록을 불러오지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.' }; }
+          if (ST.authIn && !ST.adminStores) loadAdminStores();
+          render({ focus: ST.formMsg ? '#form-msg' : '#area' });
+        });
+        return;
+      }
+      go('admin'); if (!editForm(id)) { newForm(); } ST.formNote = ''; render({ focusMain: true }); return;
     case 'newfor': // 지도·상세의 "정보 없음" 가게 → 그 가게가 골라진 입력창, 바로 메뉴 이름부터
-      go('admin'); ST.pendingStore = id; newForm(id); render(LIVE && !ST.authIn ? { focus: '#email' } : { focus: '#mname-0' }); return;
-    case 'canceledit': newForm(); ST.formNote = ''; render({ focus: '#find' }); return;
+      go('admin'); ST.pendingStore = LIVE && !ST.authIn ? id : null; newForm(id); if (LIVE && ST.authIn && !ST.adminStores) loadAdminStores(); render(LIVE && !ST.authIn ? { focus: '#email' } : { focus: '#mname-0' }); return;
+    case 'canceledit': if (ST.dirty && !window.confirm('고치던 내용이 사라져요. 수정을 취소할까요?')) return; newForm(); ST.formNote = ''; render({ focus: '#find' }); return;
+    case 'reloadadmin': ST.adminErr = false; render(); loadAdminStores(); return;
+    case 'zoom': if (window.KMap) KMap.zoom(Number(el.dataset.d)); return;
+    case 'locate': announce('내 위치를 찾고 있어요'); locate(true); return;
     case 'fsheet': ST.fsheet = el.dataset.k; render({ focus: '.fopt[aria-checked="true"]' }); return;
     case 'fpick': { const k = el.dataset.k; ST.filter[k] = el.dataset.v; ST.fsheet = null; ST.pin = null; render({ focus: `[data-act="fsheet"][data-k="${k}"]` });
-      announce(`${ST.filter.part} ${ST.filter.type} ${ST.filter.origin}, 100g당 가격을 아는 가게 ${ST.lastCount}곳`); return; }
+      announce(`${ST.filter.part} ${ST.filter.type} ${ST.filter.origin}, 100g당 가격을 아는 가게 ${rankedCount()}곳`); return; }
     case 'fclose': { const k = ST.fsheet; ST.fsheet = null; render({ focus: `[data-act="fsheet"][data-k="${k}"]` }); return; }
     case 'picker': ST.picker = !ST.picker; break;
     case 'area': {
       if (LIVE) { const a = AREAS[el.dataset.area] || AREAS.juan; ST.area = el.dataset.area; ST.where = a.name; ST.origin = { lat: a.lat, lng: a.lng }; ST.locState = '정상'; ST.mapState = '정상'; ST.pin = null; KMap.setCenter(a); }
       else ST.mapState = '정상';
       render({ focusMain: true }); return; }
-    case 'retry': if (LIVE) { if (ST.dbError && KMap.ready()) { ST.dbError = false; mergeDb(); render(); return; } startLive(); return; } ST.mapState = '정상'; render({ focusMain: true }); return;
+    case 'retry': if (LIVE) {
+      if (window.KMap && KMap.ready()) { const kakaoBad = ST.mapState === '카카오 오류'; ST.dbError = false; if (kakaoBad) { ST.mapState = '로딩'; KMap.search(); } else mergeDb(); render({ focusMain: true }); return; }
+      startLive(); return; } ST.mapState = '정상'; render({ focusMain: true }); return;
     case 'login': ST.adminState = '입력'; render({ focus: '#store' }); return;
-    case 'signout': DB.signOut().finally(() => { ST.authIn = false; ST.loginMsg = ''; clearPhoto(); ST.form = null; ST.adminStores = null; ST.photos = {}; render({ focus: '#email' }); }); return;
-    case 'closetoast': { document.getElementById('toast').innerHTML = ''; const k = ST.toastFrom; ST.toastFrom = null; const t = k && findKey(k); (t || document.getElementById('screen')).focus(); return; }
+    case 'signout': DB.signOut().catch(() => { /* 서버 응답이 없어도 이 브라우저의 로그인은 지운다 */ }).finally(() => { ST.pendingStore = null; ST.authIn = false; ST.loginMsg = ''; clearPhoto(); ST.form = null; ST.adminStores = null; ST.photos = {}; render({ focus: '#email' }); }); return;
+    case 'closetoast': hideToast(true); return;
     default: return;
   }
   render();
@@ -723,7 +837,10 @@ document.addEventListener('keydown', e => {
     const box = document.getElementById('fsheet'); if (!box) return;
     if (e.key === 'Escape') { e.preventDefault(); const k = ST.fsheet; ST.fsheet = null; render({ focus: `[data-act="fsheet"][data-k="${k}"]` }); return; }
     const opts = [...box.querySelectorAll('.fopt')], at = opts.indexOf(document.activeElement);
-    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && at >= 0) { e.preventDefault(); opts[(at + (e.key === 'ArrowDown' ? 1 : opts.length - 1)) % opts.length].focus(); return; }
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && at >= 0) {
+      e.preventDefault(); const nx = opts[(at + (e.key === 'ArrowDown' ? 1 : opts.length - 1)) % opts.length];
+      opts.forEach(o => { o.tabIndex = o === nx ? 0 : -1; }); nx.focus(); return;
+    }
     if (e.key === 'Tab') {
       const f = [opts.find(o => o.tabIndex === 0) || opts[0], box.querySelector('[data-act="fclose"].btn')].filter(Boolean);
       const i = f.indexOf(document.activeElement); e.preventDefault();
@@ -740,16 +857,16 @@ function storeSearch() { // 운영자: 가게 이름으로 카카오에서 찾�
   KMap.findPlaces(q, KMap.getCenter() || AREAS.juan).then(list => {
     ST.found = list.slice(0, 10);
     ST.findMsg = list.length ? `${ST.found.length}곳을 찾았어요. 아래에서 골라 주세요.` : '찾지 못했어요. 가게 이름을 다르게 넣어 보세요.';
-    render({ focus: list.length ? '.found__item' : '#find' });
+    render({ focus: list.length ? '.found__item' : '#find' }); announce(ST.findMsg);
   }).catch(() => { ST.findMsg = '검색하지 못했어요. 잠시 뒤 다시 해 주세요.'; render({ focus: '#find' }); });
 }
-async function mergeOne(s) { // 검색으로 고른 가게가 이미 DB에 있으면 메뉴를 붙인다
-  if (NO_DB) return;
-  try { const rows = await DB.storesByPlaceIds([s.id]); applyRow(s, rows.get(s.id)); } catch (e) { /* 저장에는 영향 없음 */ }
+async function mergeOne(s, fresh) { // 검색으로 고른 가게가 이미 DB에 있으면 메뉴를 붙인다. 확인 못 하면 false (→ 새로 입력 못 하게)
+  if (NO_DB) return false;
+  try { const rows = await DB.storesByPlaceIds([s.id], fresh); applyRow(s, rows.get(s.id)); s.dbChecked = true; return true; } catch (e) { return false; }
 }
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t.dataset.act === 'filter') { ST.filter[t.name] = t.value; ST.pin = null; render({ focus: `input[name="${t.name}"][value="${t.value}"]` }); announce(`${ST.filter.part} ${ST.filter.type} ${ST.filter.origin}, 100g당 가격을 아는 가게 ${ST.lastCount}곳`); }
+  if (t.dataset.act === 'filter') { ST.filter[t.name] = t.value; ST.pin = null; render({ focus: `input[name="${t.name}"][value="${t.value}"]` }); announce(`${ST.filter.part} ${ST.filter.type} ${ST.filter.origin}, 100g당 가격을 아는 가게 ${rankedCount()}곳`); }
   else if (t.dataset.act === 'cmpmenu') { ST.cmpPick[t.dataset.id] = Number(t.value); render({ focus: `[data-act="cmpmenu"][data-id="${esc(t.dataset.id)}"]` }); }
   else if (t.id === 'photo') {
     const file = t.files && t.files[0]; clearPhoto();
@@ -773,6 +890,8 @@ document.addEventListener('change', e => {
 let calcTimer = null;
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'find') ST.findQ = t.value;
+  if (t.id === 'email') ST.loginEmail = t.value;
   if (t.dataset.field && t.type !== 'checkbox' && t.tagName === 'INPUT') { ST.form[t.dataset.field] = t.value.trim(); ST.formMsg = null; ST.dirty = true; }
   if (t.dataset.mfield && t.type !== 'checkbox' && t.tagName === 'INPUT') {
     const i = Number(t.dataset.mi), M = ST.form.menus[i]; if (!M) return;
@@ -797,12 +916,27 @@ document.addEventListener('submit', async e => {
   if (ST.busy) return; // 두 번 눌러도 한 번만
   if (act === 'signin') {
     const email = e.target.email.value.trim(), pw = e.target.password.value;
-    if (!email || !pw) { ST.loginMsg = '이메일과 비밀번호를 넣어 주세요.'; render({ focus: '#login-msg' }); return; }
-    ST.busy = true; render();
-    try { await DB.signIn(email, pw); ST.authIn = true; ST.loginMsg = ''; newForm(ST.pendingStore); ST.pendingStore = null; ST.formMsg = null; loadAdminStores(); }
-    catch (err) { ST.loginMsg = /invalid|credentials/i.test(String(err && err.message)) ? '이메일 또는 비밀번호가 맞지 않아요.' : /rate|too many/i.test(String(err && err.message)) ? '로그인을 너무 많이 시도했어요. 잠시 뒤 다시 해 주세요.' : '로그인하지 못했어요. 인터넷 연결을 확인해 주세요.'; }
+    ST.loginEmail = email;
+    if (!email || !pw) { ST.loginMsg = '이메일과 비밀번호를 넣어 주세요.'; render({ focus: email ? '#pw' : '#email' }); return; }
+    ST.busy = true;
+    const btn = e.target.querySelector('button[type="submit"]'); if (btn) { btn.disabled = true; btn.textContent = '로그인하는 중…'; } // 칸을 지우지 않게 다시 그리지 않는다
+    try {
+      await DB.signIn(email, pw); ST.authIn = true; ST.loginMsg = '';
+      const F = ST.form, typed = F && (ST.dirty || F.edit || F.menus.some(m => m.name || m.p100 || m.w || m.price));
+      if (!typed || ST.pendingStore) newForm(ST.pendingStore); // 쓰던 내용이 있으면 그대로 둔다
+      ST.pendingStore = null; ST.formMsg = typed ? { ok: true, text: '다시 로그인했어요. 입력하던 내용은 그대로 있어요. 저장을 다시 눌러 주세요.' } : null;
+      loadAdminStores();
+    }
+    catch (err) {
+      const em = String((err && (err.code || '')) + ' ' + (err && err.message || ''));
+      ST.loginMsg = /invalid|credentials/i.test(em) ? '이메일 또는 비밀번호가 맞지 않아요.'
+        : /rate|too many|over_request/i.test(em) ? '로그인을 너무 많이 시도했어요. 잠시 뒤 다시 해 주세요.'
+        : /not.?confirmed/i.test(em) ? '이메일 인증이 끝나지 않은 계정이에요. Supabase의 Authentication > Users에서 계정을 확인해 주세요.'
+        : /fetch|network|failed/i.test(em) ? '로그인하지 못했어요. 인터넷 연결을 확인해 주세요.'
+        : '로그인하지 못했어요. 잠시 뒤 다시 해 주세요.';
+    }
     ST.busy = false;
-    render({ focus: ST.authIn ? (ST.form && ST.form.store ? '#mname-0' : '#store') : '#login-msg' });
+    render({ focus: ST.authIn ? (ST.formMsg ? '#form-msg' : ST.form && ST.form.store ? '#mname-0' : '#find') : '#pw' }); // 실패하면 비밀번호 칸으로 (오류 문구는 칸에 연결됨)
     return;
   }
   let done;
@@ -826,9 +960,11 @@ window.addEventListener('beforeunload', e => { if (ST.screen === 'admin' && ST.d
     const dy = startY - e.clientY; if (Math.abs(dy) > 6) moved = true;
     if (moved) { sheetEl.style.height = `${Math.max(88, startH + dy)}px`; sheetEl.classList.add('sheet--dragging'); }
   });
+  document.addEventListener('pointercancel', () => { if (dragging && sheetEl) { sheetEl.style.height = ''; sheetEl.classList.remove('sheet--dragging'); } dragging = false; });
   document.addEventListener('pointerup', () => {
     if (!dragging) return; dragging = false;
     if (!moved) return; // 클릭으로 처리
+    if (!sheetEl.isConnected) { render({ focus: '.sheet__handle' }); return; } // 끄는 도중 화면이 다시 그려짐
     const total = sheetEl.parentElement.getBoundingClientRect().height, r = sheetEl.getBoundingClientRect().height / total;
     ST.sheet = r < 0.3 ? 'peek' : r < 0.72 ? 'half' : 'full';
     sheetEl.style.height = ''; sheetEl.classList.remove('sheet--dragging');
@@ -861,6 +997,7 @@ function loadFavs() {
   });
   return ids;
 }
+const rankedCount = () => STORES.filter(s => !s.gray && bestMenu(s, ST.filter)).length;
 function announce(text) { // 화면 읽기 프로그램에 짧게 알림 (화면을 다시 그려도 지워지지 않는 자리)
   const el = document.getElementById('announce'); if (!el) return;
   el.textContent = ''; setTimeout(() => { el.textContent = text; }, 60);
@@ -872,7 +1009,7 @@ function livePins() { // 화면을 다시 그린 뒤: 지도 요소를 새 자�
   if (!host || !window.KMap || !KMap.ready()) return;
   KMap.mount(host);
   const f = ST.filter;
-  KMap.setPins(STORES.map(s => { const p = pinInfo(s, f); return { id: s.id, lat: s.lat, lng: s.lng, kind: p.kind, text: p.text, aria: p.aria, expanded: ST.pin === s.id }; }));
+  KMap.setPins(STORES.filter(s => s.lat != null && s.lng != null).map(s => { const p = pinInfo(s, f); return { id: s.id, lat: s.lat, lng: s.lng, kind: p.kind, text: p.text, aria: p.aria, expanded: ST.pin === s.id }; }));
 }
 function applyRow(s, r) { // DB에 있는 가게면 메뉴·확인일을 붙이고, 없으면 "정보 없음"
   if (r) { s.menus = r.menus; s.gray = !r.menus.length; s.checked = r.checked; s.memo = r.memo; s.area = r.area; if (r.place_url) s.place_url = r.place_url; }
@@ -881,27 +1018,29 @@ function applyRow(s, r) { // DB에 있는 가게면 메뉴·확인일을 붙이�
 let dbSeq = 0;
 async function mergeDb() {
   if (NO_DB) return;
-  const my = ++dbSeq;
+  const my = ++dbSeq, asked = STORES.slice();
   try {
-    const rows = await DB.storesByPlaceIds(STORES.map(s => s.id));
-    if (my !== dbSeq) return; // 그 사이 새 검색이 있었으면 버린다
-    STORES.forEach(s => applyRow(s, rows.get(s.id)));
+    const rows = await DB.storesByPlaceIds(asked.map(s => s.id));
+    if (my !== dbSeq) return; // 그 사이 새 검색이나 저장된 가게 목록 읽기가 있었으면 버린다
+    asked.forEach(s => { applyRow(s, rows.get(s.id)); s.dbChecked = true; }); // 물어본 가게에만 적용
     ST.dbError = false;
   } catch (e) {
     if (my !== dbSeq) return;
     ST.dbError = true;
     console.warn('가격 정보 읽기 실패:', e && e.message); // 키 값은 출력하지 않는다
   }
-  if (ST.screen === 'map') render();
+  if (ST.screen === 'map') bgRender();
 }
 async function savedOnly() { // 카카오가 안 될 때: 저장된 우리 가게만 목록으로 (좌표가 없으니 핀은 없음, D28-11)
-  if (NO_DB) { if (ST.screen === 'map') render(); return; }
+  if (NO_DB) { if (ST.screen === 'map') bgRender(); return; }
+  const my = ++dbSeq;
   try {
     const rows = await DB.allStores();
-    STORES = rows.map(r => { const s = KNOWN.get(r.kakaoId) || { id: r.kakaoId, name: r.name, dist: null }; applyRow(s, r); KNOWN.set(s.id, s); return s; });
+    if (my !== dbSeq) return;
+    STORES = rows.map(r => { const s = KNOWN.get(r.kakaoId) || { id: r.kakaoId, name: r.name, dist: null }; applyRow(s, r); s.dbChecked = true; KNOWN.set(s.id, s); return s; });
     ST.dbError = false;
-  } catch (e) { ST.dbError = true; }
-  if (ST.screen === 'map') render();
+  } catch (e) { if (my !== dbSeq) return; ST.dbError = true; }
+  if (ST.screen === 'map') bgRender();
 }
 function fromPlace(p) { // 카카오 장소 → 화면용 가게 (메모리만). 가격 정보는 mergeDb가 붙인다
   const s = KNOWN.get(p.id) || { id: p.id, name: p.place_name, place_url: p.place_url, menus: [], gray: true, checked: null, memo: '' };
@@ -917,41 +1056,41 @@ const liveHandlers = {
     STORES = places.filter(isMeatPlace).map(fromPlace).sort((a, b) => a.dist - b.dist);
     if (ST.mapState === '로딩' || ST.mapState === '카카오 오류') ST.mapState = ST.locState || '정상';
     if (ST.pin && !STORES.some(s => s.id === ST.pin)) ST.pin = null;
-    if (ST.screen === 'map') render(); // 포커스는 render가 그대로 지킨다
+    if (ST.screen === 'map') bgRender();
     mergeDb();
   },
   onError() { ST.searching = false; ST.mapState = '카카오 오류'; savedOnly(); },
   onIdle() { KMap.updatePinFocus(); },
-  onPin(id) { ST.pin = ST.pin === id ? null : id; if (ST.pin && ST.sheet === 'peek') ST.sheet = 'half'; render({ focus: `[data-act="pin"][data-id="${esc(id)}"]` }); },
+  onPin(id) { ST.pin = ST.pin === id ? null : id; if (ST.pin && ST.sheet === 'peek') ST.sheet = 'half'; render({ focus: `[data-act="pin"][data-id="${esc(id)}"]` }); if (ST.pin && byId(ST.pin)) announce(`${byId(ST.pin).name} 정보를 목록 자리에 보여 줘요`); },
 };
-function locate() { // R2: 허용 → 내 위치 / 거부·실패 → 주안역·구월동 고르기 / 지역 밖 → 준비 중 안내 (D26-16)
+function locate(manual) { // R2: 허용 → 내 위치 / 거부·실패 → 주안역·구월동 고르기 / 지역 밖 → 준비 중 안내 (D26-16)
   if (!navigator.geolocation) { ST.locState = '위치 거부'; ST.mapState = '위치 거부'; render(); return; }
   navigator.geolocation.getCurrentPosition(pos => {
     const me = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-    if (inService(me)) { ST.origin = me; ST.where = '내 위치 주변'; ST.locState = '정상'; KMap.setCenter(me); }
+    if (inService(me)) { ST.origin = me; ST.where = '내 위치 주변'; ST.locState = '정상'; if (ST.mapState === '위치 거부' || ST.mapState === '지역 밖') ST.mapState = '정상'; KMap.setCenter(me); if (manual) announce('내 위치 주변을 보여 줘요'); }
     else { ST.locState = '지역 밖'; ST.mapState = '지역 밖'; }
-    if (ST.screen === 'map') render();
+    if (ST.screen === 'map') bgRender();
   }, () => {
     ST.locState = '위치 거부'; ST.mapState = '위치 거부';
-    if (ST.screen === 'map') render();
+    if (ST.screen === 'map') bgRender();
   }, { timeout: 8000, maximumAge: 600000 });
 }
 function startLive() {
   if (!window.KMap) { ST.mapState = '카카오 오류'; savedOnly(); return; } // js/kakao.js를 못 불러온 경우
   ST.mapState = '로딩'; render();
   KMap.init(CONFIG.KAKAO_JS_KEY, AREAS.juan, liveHandlers).then(() => {
-    render(); // 지도 요소를 붙인다
-    KMap.search();
+    render(); // 지도 요소를 붙인다 → idle 이벤트가 검색을 부른다
+    setTimeout(() => { if (ST.mapState === '로딩' && !ST.searching) KMap.search(); }, 1500); // idle이 안 오는 경우만
     if (!ST.locAsked) { ST.locAsked = true; locate(); }
   }).catch(() => { ST.mapState = '카카오 오류'; savedOnly(); });
 }
-window.addEventListener('resize', () => { if (LIVE) { KMap.relayout(); KMap.updatePinFocus(); } });
+window.addEventListener('resize', () => { if (LIVE && window.KMap) { KMap.relayout(); KMap.updatePinFocus(); } });
 
 const favIds = LIVE ? loadFavs() : [];
 render();
 if (LIVE) startLive();
-if (LIVE && !NO_DB && favIds.length) DB.storesByPlaceIds(favIds).then(rows => favIds.forEach(id => { const s = byId(id), r = rows.get(id); if (s && r) applyRow(s, r); })).then(() => render()).catch(() => {});
+if (LIVE && !NO_DB && favIds.length) DB.storesByPlaceIds(favIds).then(rows => favIds.forEach(id => { const s = byId(id), r = rows.get(id); if (s) { applyRow(s, r); s.dbChecked = true; } })).then(() => { ST.favErr = false; bgRender(); }).catch(() => { ST.favErr = true; bgRender(); });
 if (LIVE && !NO_DB) { // 이전에 로그인해 둔 운영자 세션이 있으면 이어서 쓴다
-  DB.session().then(s => { ST.authIn = !!s; if (ST.screen === 'admin') render(); }).catch(() => {});
-  DB.onAuth(s => { const was = ST.authIn; ST.authIn = !!s; if (was !== ST.authIn && ST.screen === 'admin') render(); });
+  DB.session().then(s => { const was = ST.authIn; ST.authIn = !!s; if (ST.authIn && ST.screen === 'admin' && !ST.adminStores) loadAdminStores(); if (was !== ST.authIn && ST.screen === 'admin') bgRender(); }).catch(() => {});
+  DB.onAuth(s => { const was = ST.authIn; ST.authIn = !!s; if (was !== ST.authIn && ST.screen === 'admin') bgRender(); });
 }

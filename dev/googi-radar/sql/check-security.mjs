@@ -44,6 +44,12 @@ check('운영자 명단(admins)이 밖에서 안 보인다', r.status >= 400, 'H
 r = await call('/rest/v1/rpc/is_admin', { method: 'POST', body: '{}' });
 check('운영자 확인 함수가 밖에서 안 보인다', r.status >= 400, 'HTTP ' + r.status);
 
+// 4-2. 저장 함수·사진 경로 함수(06-safe-save.sql): 로그인 안 하면 부를 수 없어야 함
+r = await call('/rest/v1/rpc/save_store_menus', { method: 'POST', body: JSON.stringify({ p_mode: 'new', p_store: { kakao_place_id: '1', name: 'x', area: '기타', checked_at: '2026-01-01' }, p_menus: [{ name: 'x', part: '기타', kind: '기타', origin: '국내산', price: 1 }], p_removed: [] }) });
+check('로그인 안 하면 저장 함수를 부를 수 없다', r.status >= 400 && !/^"?[0-9a-f-]{36}"?$/.test(r.body.trim()), 'HTTP ' + r.status + (r.status === 404 ? ' (06 SQL 실행 전이면 404)' : ''));
+r = await call('/rest/v1/rpc/menu_photo_path', { method: 'POST', body: JSON.stringify({ p_kakao_id: '1615804803' }) });
+check('로그인 안 하면 사진 경로 함수를 부를 수 없다', r.status >= 400, 'HTTP ' + r.status);
+
 // 5. 메뉴판 사진 저장소: 목록 보기·올리기 막혀야 함
 r = await call('/storage/v1/object/list/menu-photos', { method: 'POST', body: JSON.stringify({ prefix: '', limit: 10 }) });
 check('로그인 안 하면 사진 목록을 볼 수 없다', r.status >= 400 || r.body.trim() === '[]', 'HTTP ' + r.status);
