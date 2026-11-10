@@ -1,0 +1,9 @@
+# 실제 키가 들어가는 파일 (dev-pipeline 규칙: 공개용 키도 저장소에 올리지 않는다)
+app/config.js
+.env
+.env.*
+!.env.example
+
+# 편집기·운영체제
+.DS_Store
+Thumbs.db
