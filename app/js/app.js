@@ -69,7 +69,7 @@ const ST = {
   area: 'juan', where: AREAS.juan.name, origin: { lat: AREAS.juan.lat, lng: AREAS.juan.lng }, searching: false, locState: null, locAsked: false,
   filter: { part: '삼겹살', type: '생고기', origin: '국내산' },
   cmpIds: DEMO ? ['s1', 's2', 's3'] : [], cmpMeat: null, basis: '가성비', picker: false,
-  dbError: false, pin: null, sheet: 'half', detailId: DEMO ? 's1' : null, favs: DEMO ? { s2: true } : {}, form: null, formMsg: null, saveFails: false, dirty: false,
+  dbError: false, authIn: false, busy: false, loginMsg: '', adminStores: null, pin: null, sheet: 'half', detailId: DEMO ? 's1' : null, favs: DEMO ? { s2: true } : {}, form: null, formMsg: null, saveFails: false, dirty: false,
   showNotes: false, menuOpen: false, toastFrom: null,
 };
 const DEV = [
@@ -326,7 +326,17 @@ function viewDetail() {
 }
 
 // ---------- ⑤ 운영자 입력 (메뉴 ⋯ 안) ----------
-function newForm() { ST.form = { store: 'g3', name: '', part: '삼겹살', type: '생고기', aged: false, origin: '국내산', p100: '', w: '', price: '', memo: '', date: '2026-11-10' }; ST.dirty = false; }
+function guessArea(s) { // D26-14: 주안역·구월동 로데오거리 기준 반경 1km, 아니면 기타
+  if (!s || s.lat == null) return '기타';
+  if (distM(s, AREAS.juan) <= 1000) return '주안';
+  if (distM(s, AREAS.guwol) <= 1000) return '구월';
+  return '기타';
+}
+function newForm(keepStore) {
+  const pick = [keepStore, ST.pin, ST.detailId].find(id => id && STORES.some(s => s.id === id)) || (STORES[0] && STORES[0].id) || (DEMO ? 'g3' : '');
+  ST.form = { store: pick, area: guessArea(byId(pick)), name: '', part: '삼겹살', type: '생고기', aged: false, origin: '국내산', p100: '', w: '', price: '', memo: '', date: C.kstDate(new Date()) };
+  ST.dirty = false;
+}
 const FIELD_LABEL = { p100: '100g당 가격', w: '1인분 중량', price: '1인분 가격' };
 const showFieldErr = () => ST.dirty || (ST.formMsg && !ST.formMsg.ok);
 function check() { // D26-9, R9
@@ -342,6 +352,10 @@ function check() { // D26-9, R9
     return { err: m, fields: ['p100', 'price'], fieldErr: { p100: `100g당 가격: ${m}`, price: `1인분 가격: ${m}` }, empty: true };
   }
   if (p100 == null && price == null) return { err: '중량만으로는 비교할 수 없어요. 1인분 가격도 넣어 주세요.', fields: ['price'], fieldErr: { price: '1인분 가격: 중량만으로는 비교할 수 없어요. 1인분 가격도 넣어 주세요.' } };
+  // DB 제한과 같은 범위 (01-schema.sql)
+  if ((p100 != null && p100 > 1000000) || (w != null && w > 5000) || (price != null && price > 10000000)) return { err: '값이 너무 커요. 100g당 100만 원, 중량 5,000g, 가격 1,000만 원 이하로 넣어 주세요.', fields: ['p100'] };
+  if (String(F.name || '').length > 60) return { err: '메뉴 이름은 60자까지 넣을 수 있어요.', fields: ['mname'] };
+  if (String(F.memo || '').length > 200) return { err: '메모는 200자까지 넣을 수 있어요.', fields: ['memo'] };
   const u = unit({ p100, w: w && price ? w : null, price: w && price ? price : (p100 == null ? price : null) });
   if (!u) return { info: '중량이 없어 100g당 가격을 계산할 수 없어요. “중량 미표기”로 저장돼요.' };
   return { info: `100g당 ${won(u.v)}으로 계산돼요${u.mismatch ? ' (메뉴판 표기와 달라요)' : ''}` };
@@ -354,8 +368,33 @@ function calcLine(c) { // 처음 연 빈 폼은 오류가 아니라 안내로 �
 function field(id, label, inner, hint) {
   return `<div class="field"><label for="${id}">${label}</label>${inner}${hint ? `<p class="hint" id="${id}-hint">${hint}</p>` : ''}</div>`;
 }
+function viewLogin() { // 운영자 로그인 (D26-4, P-3: 이메일+비밀번호, 운영자 1명)
+  const m = ST.loginMsg;
+  return `<div class="screen-pad"><form class="form panel" data-act="signin" novalidate>
+    <p>메뉴 입력은 운영자만 할 수 있어요.</p>
+    ${field('email', '이메일', `<input id="email" name="email" type="email" autocomplete="username" required spellcheck="false" maxlength="200">`)}
+    ${field('pw', '비밀번호', `<input id="pw" name="password" type="password" autocomplete="current-password" required maxlength="200">`)}
+    <div class="actions"><button class="btn btn--primary" type="submit" ${ST.busy ? 'disabled' : ''}>${ST.busy ? '로그인하는 중…' : '운영자로 로그인'}</button></div>
+    ${m ? `<p id="login-msg" class="err" role="alert" tabindex="-1">${esc(m)}</p>` : ''}
+    <p class="hint">공용 컴퓨터나 남의 폰에서는 입력이 끝나면 꼭 로그아웃해 주세요.</p>
+  </form></div>`;
+}
+function ratioText() { // R14: 상권별 중량 표기 비율 (D26-8, D28-9). 실서비스는 DB의 전체 가게로 센다
+  const all = LIVE ? (ST.adminStores || []) : STORES.filter(s => !s.gray).map(s => ({ ...s, area: '주안' }));
+  if (LIVE && !ST.adminStores) return '불러오는 중…';
+  const rows = ['주안', '구월', '기타'].map(a => {
+    const entered = all.filter(s => s.area === a && s.menus.some(m => ['삼겹살', '목살'].includes(m.part)));
+    const ok = entered.filter(s => s.menus.some(m => ['삼겹살', '목살'].includes(m.part) && unit(m)));
+    return entered.length ? `${a}: 확인한 ${entered.length}곳 중 ${ok.length}곳(${Math.round(ok.length / entered.length * 100)}%)이 100g당 가격을 계산할 수 있어요.` : '';
+  }).filter(Boolean);
+  return rows.length ? rows.join('<br>') : '아직 확인한 가게가 없어요. 메뉴를 입력하면 여기에 비율이 나와요.';
+}
 function viewAdmin() {
-  if (ST.adminState === '로그인 전') {
+  if (LIVE && NO_DB) return `<div class="screen-pad"><div class="empty"><p>가격 DB가 연결되지 않아 메뉴를 입력할 수 없어요.</p><p>app/config.js의 Supabase 칸을 확인해 주세요.</p></div></div>`;
+  if (LIVE && !ST.authIn) return viewLogin();
+  if (LIVE && !STORES.length) return `<div class="screen-pad"><div class="empty"><p>입력할 가게가 지도에 없어요.</p><p>지도 화면에서 가게가 보이게 옮긴 뒤 다시 열어 주세요.</p>
+    <div class="actions"><button class="btn btn--primary" type="button" data-act="tab" data-tab="map" data-from="empty">지도로 가기</button><button class="btn" type="button" data-act="signout">로그아웃</button></div></div></div>`;
+  if (!LIVE && ST.adminState === '로그인 전') {
     return `<div class="screen-pad"><div class="empty"><p>메뉴 입력은 운영자만 할 수 있어요.</p><div class="actions"><button class="btn btn--primary" type="button" data-act="login">운영자로 로그인</button></div></div></div>`;
   }
   if (!ST.form) newForm();
@@ -364,12 +403,11 @@ function viewAdmin() {
   const inv = k => `aria-invalid="${!!errOf(k)}" aria-describedby="${k}-err calc"`;
   const opts = (k, arr) => arr.map(v => `<option ${F[k] === v ? 'selected' : ''}>${v}</option>`).join('');
   const numInput = (id, ph) => `<input id="${id}" name="${id}" inputmode="numeric" autocomplete="off" data-field="${id}" value="${esc(F[id])}" placeholder="${ph}" ${inv(id)}><p class="field-err" id="${id}-err">${errOf(id)}</p>`;
-  const entered = STORES.filter(s => !s.gray && s.menus.some(m => PARTS.includes(m.part)));
-  const ok = entered.filter(s => s.menus.some(m => PARTS.includes(m.part) && unit(m)));
-  const ratio = entered.length ? `주안역: 확인한 ${entered.length}곳 중 ${ok.length}곳(${Math.round(ok.length / entered.length * 100)}%)이 100g당 가격을 계산할 수 있어요.` : '아직 확인한 가게가 없어요. 메뉴를 입력하면 여기에 비율이 나와요.';
-  return `<div class="screen-pad"><form class="form panel" data-act="save" novalidate>
-    <p class="hint">메뉴판에 적힌 그대로 넣어 주세요.</p>
-    ${field('store', '메뉴를 입력할 가게', `<select id="store" name="store" data-field="store" autocomplete="off">${STORES.map(s => `<option value="${s.id}" ${F.store === s.id ? 'selected' : ''}>${esc(s.name)}${s.gray ? ' (정보 없음)' : ''}</option>`).join('')}</select>`)}
+  const ratio = ratioText();
+  return `<div class="screen-pad">${LIVE ? `<p class="screen-note">운영자로 로그인했어요. <button class="btn btn--quiet btn--sm btn--on-dark" type="button" data-act="signout">로그아웃</button></p>` : ''}<form class="form panel" data-act="save" novalidate>
+    <p class="hint">메뉴판에 적힌 그대로 넣어 주세요.${LIVE ? ' 가게 목록은 지금 지도에 보이는 고기집이에요.' : ''}</p>
+    ${field('store', '메뉴를 입력할 가게', `<select id="store" name="store" data-field="store" autocomplete="off">${STORES.map(s => `<option value="${esc(s.id)}" ${F.store === s.id ? 'selected' : ''}>${esc(s.name)}${s.gray ? ' (정보 없음)' : ''}${distTxt(s) ? ' · ' + distTxt(s) : ''}</option>`).join('')}</select>`)}
+    ${LIVE ? field('area', '상권', `<select id="area" name="area" data-field="area" autocomplete="off" aria-describedby="area-hint">${['주안', '구월', '기타'].map(a => `<option ${F.area === a ? 'selected' : ''}>${a}</option>`).join('')}</select>`, '주안역·구월동 로데오거리에서 1km 안이면 자동으로 골라져요.') : ''}
     ${field('mname', '메뉴 이름 (메뉴판 그대로)', `<input id="mname" name="name" type="text" data-field="name" value="${esc(F.name)}" placeholder="예: 생삼겹살" autocomplete="off">`)}
     <div class="row2">${field('part', '부위', `<select id="part" name="part" data-field="part" autocomplete="off">${opts('part', ['삼겹살', '목살', '항정살', '갈매기살', '기타'])}</select>`)}
       ${field('type', '종류', `<select id="type" name="type" data-field="type" autocomplete="off">${opts('type', ['생고기', '냉동', '대패', '기타'])}</select>`)}</div>
@@ -382,15 +420,42 @@ function viewAdmin() {
       <p id="calc" class="${cl.cls}" aria-live="polite">${cl.text}</p>
     </fieldset>
     ${field('memo', '메모 (예: 2인분 이상 주문)', `<input id="memo" name="memo" type="text" data-field="memo" value="${esc(F.memo)}" autocomplete="off">`)}
-    <div class="row2">${field('date', '메뉴 확인일', `<input id="date" name="date" type="date" data-field="date" value="${F.date}" autocomplete="off">`)}
-      ${field('photo', '메뉴판 사진 (선택)', `<input id="photo" name="photo" type="file" accept="image/*" aria-describedby="photo-hint">`, '운영자만 볼 수 있어요.')}</div>
-    <div class="actions"><button class="btn btn--primary" type="submit">메뉴 저장</button></div>
-    ${ST.formMsg ? `<p id="form-msg" class="${ST.formMsg.ok ? 'ok' : 'err'}" role="${ST.formMsg.ok ? 'status' : 'alert'}" tabindex="-1">${ST.formMsg.text}</p>` : ''}
+    <div class="row2">${field('date', '메뉴 확인일', `<input id="date" name="date" type="date" data-field="date" value="${esc(F.date)}" max="${C.kstDate(new Date())}" autocomplete="off">`)}
+      ${field('photo', '메뉴판 사진 (선택)', `<input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="photo-hint">`, '운영자만 볼 수 있어요. 5MB 이하 jpg·png·webp.')}</div>
+    <div class="actions"><button class="btn btn--primary" type="submit" ${ST.busy ? 'disabled' : ''}>${ST.busy ? '저장하는 중…' : '메뉴 저장'}</button></div>
+    ${ST.formMsg ? `<p id="form-msg" class="${ST.formMsg.ok ? 'ok' : 'err'}" role="${ST.formMsg.ok ? 'status' : 'alert'}" tabindex="-1">${esc(ST.formMsg.text)}</p>` : ''}
     ${openq('저장할 때 카카오 장소 ID와 좌표를 함께 저장. 좌표 저장이 카카오 약관상 괜찮은지 개발 전 확인 [기획 열린 질문 Q9]')}
   </form>
   <h2 class="section-title">중량 표기 비율</h2>
   <p class="panel">${ratio}</p></div>`;
 }
+const SAVE_FAIL = '저장하지 못했어요. 인터넷 연결을 확인하고 다시 저장해 주세요. 입력한 내용은 그대로 있어요.';
+function saveErrorText(e) { // DB가 거부한 이유를 사람 말로 (키·토큰 같은 값은 보여 주지 않음)
+  const code = String((e && e.code) || ''), msg = String((e && e.message) || '');
+  if (code === '42501' || /row-level security|permission denied/i.test(msg)) return '이 계정은 운영자로 등록되지 않아 저장할 수 없어요.';
+  if (/JWT|expired|not authenticated|401/i.test(msg + code)) return '로그인이 끝났어요. 다시 로그인한 뒤 저장해 주세요. 입력한 내용은 그대로 있어요.';
+  if (code === '23514' || code === '22001') return '입력한 값이 허용 범위를 벗어났어요. 숫자와 글자 수를 확인해 주세요.';
+  return SAVE_FAIL;
+}
+async function saveLive(file) {
+  const c = check();
+  if (c.err) { ST.formMsg = { ok: false, text: c.err, field: c.fields && c.fields[0] }; return; }
+  const pp = DB.photoProblem(file);
+  if (pp) { ST.formMsg = { ok: false, text: pp, field: 'photo' }; return; }
+  const F = ST.form, s = byId(F.store), num = x => x === '' ? null : Number(x);
+  if (!s) { ST.formMsg = { ok: false, text: '가게를 골라 주세요.', field: 'store' }; return; }
+  const menu = { name: F.name || F.part, part: F.part, type: F.type, aged: F.aged, origin: F.origin, p100: num(F.p100), w: num(F.price) ? num(F.w) : null, price: num(F.price) };
+  try {
+    const r = await DB.saveMenu({ kakaoId: s.id, name: s.name, area: F.area, checked: F.date, memo: F.memo }, menu, file);
+    ST.formMsg = { ok: true, text: r.photoFailed ? '메뉴는 저장했어요. 사진은 올리지 못했어요(다시 올리려면 대시보드 Storage에서 넣어 주세요).' : '저장했어요. 지도에 바로 반영돼요.' };
+    newForm(s.id);
+    mergeDb(); loadAdminStores();
+  } catch (e) {
+    ST.formMsg = { ok: false, text: saveErrorText(e) };
+    if (/로그인이 끝났어요/.test(ST.formMsg.text)) ST.authIn = false;
+  }
+}
+async function loadAdminStores() { try { ST.adminStores = await DB.allStores(); } catch (e) { ST.adminStores = []; } if (ST.screen === 'admin') render(); }
 function save() {
   const c = check();
   if (c.err) { ST.formMsg = { ok: false, text: c.err, field: c.fields && c.fields[0] }; return; }
@@ -485,7 +550,7 @@ document.addEventListener('click', e => {
   switch (el.dataset.act) {
     case 'tab': go(el.dataset.tab); render({ focusMain: true }); return;
     case 'menu': ST.menuOpen = !ST.menuOpen; render({ focus: ST.menuOpen ? '#menu-list button' : '#menu-btn' }); return;
-    case 'admin': go('admin'); render({ focusMain: true }); return;
+    case 'admin': go('admin'); if (LIVE && ST.authIn && !ST.adminStores) loadAdminStores(); if (!ST.form && STORES.length) newForm(); render({ focusMain: true }); return;
     case 'pin': ST.pin = ST.pin === id ? null : id; if (ST.pin && ST.sheet === 'peek') ST.sheet = 'half'; break;
     case 'closepin': { const was = ST.pin; ST.pin = null; render({ focus: `[data-act="pin"][data-id="${esc(was)}"]` }); return; }
     case 'sheet': ST.sheet = SHEET_NEXT[ST.sheet]; break;
@@ -499,6 +564,7 @@ document.addEventListener('click', e => {
       render({ focusMain: true }); return; }
     case 'retry': if (LIVE) { if (ST.dbError && KMap.ready()) { ST.dbError = false; mergeDb(); render(); return; } startLive(); return; } ST.mapState = '정상'; render({ focusMain: true }); return;
     case 'login': ST.adminState = '입력'; render({ focus: '#store' }); return;
+    case 'signout': DB.signOut().finally(() => { ST.authIn = false; ST.loginMsg = ''; ST.form = null; ST.adminStores = null; render({ focus: '#email' }); }); return;
     case 'closetoast': { document.getElementById('toast').innerHTML = ''; const k = ST.toastFrom; ST.toastFrom = null; const t = k && findKey(k); (t || document.getElementById('screen')).focus(); return; }
     default: return;
   }
@@ -512,7 +578,12 @@ document.addEventListener('change', e => {
   if (t.dataset.act === 'filter') { ST.filter[t.name] = t.value; ST.pin = null; render({ focus: `input[name="${t.name}"][value="${t.value}"]` }); }
   else if (t.dataset.act === 'basis') { ST.basis = t.value; render({ focus: `input[name="basis"][value="${t.value}"]` }); }
   else if (t.dataset.act === 'meat') { ST.cmpMeat = t.value; render({ focus: '#meat' }); }
-  else if (t.dataset.field) { ST.form[t.dataset.field] = t.type === 'checkbox' ? t.checked : t.value.trim(); ST.formMsg = null; ST.dirty = true; updateCalc(); }
+  else if (t.dataset.field) {
+    ST.form[t.dataset.field] = t.type === 'checkbox' ? t.checked : t.value.trim(); ST.formMsg = null; ST.dirty = true;
+    if (t.dataset.field === 'area') ST.form.areaTouched = true;
+    if (t.dataset.field === 'store' && !ST.form.areaTouched) { ST.form.area = guessArea(byId(t.value)); const a = document.getElementById('area'); if (a) a.value = ST.form.area; }
+    updateCalc();
+  }
 });
 let calcTimer = null;
 document.addEventListener('input', e => {
@@ -532,9 +603,27 @@ function updateCalc() { // 입력 중에는 전체를 다시 그리지 않고 �
     const p = document.getElementById(k + '-err'); if (p) p.textContent = msg;
   });
 }
-document.addEventListener('submit', e => {
-  if (e.target.dataset.act !== 'save') return;
-  e.preventDefault(); save();
+document.addEventListener('submit', async e => {
+  const act = e.target.dataset.act;
+  if (act !== 'save' && act !== 'signin') return;
+  e.preventDefault();
+  if (ST.busy) return; // 두 번 눌러도 한 번만
+  if (act === 'signin') {
+    const email = e.target.email.value.trim(), pw = e.target.password.value;
+    if (!email || !pw) { ST.loginMsg = '이메일과 비밀번호를 넣어 주세요.'; render({ focus: '#login-msg' }); return; }
+    ST.busy = true; render();
+    try { await DB.signIn(email, pw); ST.authIn = true; ST.loginMsg = ''; newForm(); ST.formMsg = null; loadAdminStores(); }
+    catch (err) { ST.loginMsg = /invalid|credentials/i.test(String(err && err.message)) ? '이메일 또는 비밀번호가 맞지 않아요.' : /rate|too many/i.test(String(err && err.message)) ? '로그인을 너무 많이 시도했어요. 잠시 뒤 다시 해 주세요.' : '로그인하지 못했어요. 인터넷 연결을 확인해 주세요.'; }
+    ST.busy = false;
+    render({ focus: ST.authIn ? '#store' : '#login-msg' });
+    return;
+  }
+  if (LIVE) {
+    const fileEl = document.getElementById('photo'), file = fileEl && fileEl.files && fileEl.files[0];
+    ST.busy = true; render();
+    await saveLive(file);
+    ST.busy = false;
+  } else save();
   const m = ST.formMsg;
   render({ focus: m && !m.ok && m.field ? `#${m.field}` : '#form-msg' });
 });
@@ -648,3 +737,7 @@ window.addEventListener('resize', () => { if (LIVE) { KMap.relayout(); KMap.upda
 
 render();
 if (LIVE) startLive();
+if (LIVE && !NO_DB) { // 이전에 로그인해 둔 운영자 세션이 있으면 이어서 쓴다
+  DB.session().then(s => { ST.authIn = !!s; if (ST.screen === 'admin') render(); }).catch(() => {});
+  DB.onAuth(s => { const was = ST.authIn; ST.authIn = !!s; if (was !== ST.authIn && ST.screen === 'admin') render(); });
+}
