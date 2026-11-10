@@ -10,6 +10,7 @@ window.APP_CONFIG = {
   // Supabase(supabase.com) > 프로젝트 > Project Settings > API > "Project URL"
   SUPABASE_URL: '',
 
-  // Supabase > 프로젝트 > Project Settings > API > Project API keys > "anon public" (service_role 아님!)
+  // Supabase > Project Settings > API Keys > "Publishable key" (sb_publishable_로 시작, 예전 이름 anon public).
+  //   "Secret key"(sb_secret_, 예전 service_role)는 절대 넣지 마세요!
   SUPABASE_ANON_KEY: '',
 };

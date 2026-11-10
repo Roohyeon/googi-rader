@@ -2,36 +2,47 @@
 /* 고기 레이더 — 실제 서비스 화면 (dev 묶음 1)
    - 계산 규칙: js/calc.js (자동 테스트: node --test "app/tests/*.test.js")
    - 키: config.js (config.example.js 복사). 키가 비면 설정 안내 화면을 보여 준다
-   - 묶음 1에서는 카카오·Supabase 연결 전이라 ?demo=1 로 열 때만 샘플 데이터(js/sample.js)로 화면이 동작한다 (묶음 2·3에서 교체) */
+   - 묶음 2: 카카오 지도 + 실시간 고기집 검색(js/kakao.js). 가격 정보(Supabase)는 묶음 3에서 붙인다
+   - ?demo=1 로 열면 샘플 데이터(js/sample.js)와 그림 지도로 화면만 볼 수 있다 */
 const C = window.Calc;
-const { PARTS, TYPES, ORIGINS, fmt, won, won10, esc, unit, meatKey, matches, bestMenu, noWeight, josa, gainText } = C;
+const { PARTS, TYPES, ORIGINS, fmt, won, won10, esc, unit, meatKey, matches, bestMenu, noWeight, josa, gainText, distM, isMeatPlace, inService } = C;
 
 // ---------- 설정 ----------
 const CONFIG = window.APP_CONFIG || {};
 const REQUIRED_KEYS = [
   ['KAKAO_JS_KEY', '카카오 JavaScript 키'],
   ['SUPABASE_URL', 'Supabase Project URL'],
-  ['SUPABASE_ANON_KEY', 'Supabase anon public 키'],
+  ['SUPABASE_ANON_KEY', 'Supabase Publishable key (예전 anon public)'],
 ];
 const missingKeys = () => REQUIRED_KEYS.filter(([k]) => !CONFIG[k] || !String(CONFIG[k]).trim());
 const DEMO = /[?&]demo=1(&|$)/.test(location.search);
+const hasKey = k => !!CONFIG[k] && !!String(CONFIG[k]).trim();
+const LIVE = !DEMO && hasKey('KAKAO_JS_KEY'); // 카카오 키가 있으면 실제 지도. Supabase 키는 묶음 3부터 필요
+const NO_DB = LIVE && !(hasKey('SUPABASE_URL') && hasKey('SUPABASE_ANON_KEY'));
 const TODAY = new Date(); // 실제 오늘 (오래된 정보 판정은 한국 시간 기준, calc.isStale)
 
-// ---------- 데이터 (묶음 1: 샘플만) ----------
-const STORES = DEMO ? (window.SAMPLE_STORES || []) : [];
+// ---------- 데이터 ----------
+// STORES: 지금 지도 영역에서 찾은 가게. KNOWN: 이번 방문 동안 본 가게 전체 (비교·즐겨찾기가 지도 밖으로 나가도 찾을 수 있게). 둘 다 메모리만 (D31)
+let STORES = DEMO ? (window.SAMPLE_STORES || []) : [];
+const KNOWN = new Map(STORES.map(s => [s.id, s]));
+const byId = id => KNOWN.get(id);
+// 동네 기준점 (D26-11). 좌표는 임시값: 주안역, 구월동 로데오거리
+const AREAS = { juan: { name: '주안역 주변', lat: 37.4649, lng: 126.6807 }, guwol: { name: '구월동 주변', lat: 37.4486, lng: 126.7019 } };
 const nameTag = s => `<span translate="no">${esc(s.name)}</span>`;
 const placeUrl = s => s.place_url || `https://place.map.kakao.com/${encodeURIComponent(s.id)}`;
 const kakaoLink = (s, cls) => `<a class="${cls || 'btn btn--quiet'}" href="${esc(placeUrl(s))}" target="_blank" rel="noopener"><span translate="no">카카오맵</span>에서 리뷰 보기<span class="sr-only"> (${esc(s.name)}, 새 창)</span></a>`;
 const isStale = s => C.isStale(s.checked, TODAY);
 const pinInfo = (s, f) => C.pinInfo(s, f);
-// 샘플 지도의 % 좌표 → m (1칸 = 20m). 묶음 2에서 카카오 검색 결과 좌표(메모리만, D31) 거리로 바꾼다
-const dist2 = (a, b) => Math.hypot((a.x - b.x) * 20, (a.y - b.y) * 20);
-const centerOf = sel => ({ x: sel.reduce((t, s) => t + s.x, 0) / sel.length, y: sel.reduce((t, s) => t + s.y, 0) / sel.length });
+// 거리: 실제 지도는 위경도(메모리만, D31), 샘플은 그림 지도의 % 좌표(1칸 = 20m)
+const dist2 = (a, b) => a.lat != null ? distM(a, b) : Math.hypot((a.x - b.x) * 20, (a.y - b.y) * 20);
+const centerOf = sel => sel[0].lat != null
+  ? { lat: sel.reduce((t, s) => t + s.lat, 0) / sel.length, lng: sel.reduce((t, s) => t + s.lng, 0) / sel.length }
+  : { x: sel.reduce((t, s) => t + s.x, 0) / sel.length, y: sel.reduce((t, s) => t + s.y, 0) / sel.length };
 const dongSise = (sel, f) => C.dongSise(sel, STORES.filter(s => !s.gray), f, dist2, centerOf);
 
 // ---------- 설정 안내 화면 ----------
 function viewSetup() {
-  const miss = missingKeys();
+  const miss = missingKeys().filter(([k]) => k === 'KAKAO_JS_KEY'); // 화면을 막는 건 카카오 키뿐. Supabase 키는 묶음 3에서
   const list = miss.length
     ? `<p>아래 키가 비어 있어요. <code>app/config.js</code>에 넣어 주세요.</p><ul class="setup-list">${miss.map(([k, label]) => `<li><code>${k}</code> — ${label}</li>`).join('')}</ul>
        <p class="t-muted">config.js가 없으면 같은 폴더의 config.example.js를 복사해서 이름을 config.js로 바꾸세요. 비밀 키(service_role)는 넣지 마세요.</p>`
@@ -42,10 +53,11 @@ function viewSetup() {
 
 // ---------- 상태 ----------
 const ST = {
-  screen: 'map', prev: 'map', mapState: '정상', cmpState: '정상', adminState: '로그인 전',
+  screen: 'map', prev: 'map', mapState: LIVE ? '로딩' : '정상', cmpState: '정상', adminState: '로그인 전',
+  area: 'juan', where: AREAS.juan.name, origin: { lat: AREAS.juan.lat, lng: AREAS.juan.lng }, searching: false, locState: null, locAsked: false,
   filter: { part: '삼겹살', type: '생고기', origin: '국내산' },
-  cmpIds: ['s1', 's2', 's3'], cmpMeat: null, basis: '가성비', picker: false,
-  pin: null, sheet: 'half', detailId: 's1', favs: { s2: true }, form: null, formMsg: null, saveFails: false, dirty: false,
+  cmpIds: DEMO ? ['s1', 's2', 's3'] : [], cmpMeat: null, basis: '가성비', picker: false,
+  pin: null, sheet: 'half', detailId: DEMO ? 's1' : null, favs: DEMO ? { s2: true } : {}, form: null, formMsg: null, saveFails: false, dirty: false,
   showNotes: false, menuOpen: false, toastFrom: null,
 };
 const DEV = [
@@ -113,7 +125,7 @@ function filterRow(f) { // 한 줄 가로 스크롤 칩. 세 묶음은 각각 �
   return `<div class="filterbar" role="group" aria-label="고기 고르기">${grp('part', '부위', PARTS)}<span class="fsep" aria-hidden="true"></span>${grp('type', '종류', TYPES)}<span class="fsep" aria-hidden="true"></span>${grp('origin', '원산지', ORIGINS)}</div>`;
 }
 function pinView(f) { // 핀을 고르면 시트 안에 그 가게를 보여 준다 (지도를 가리지 않고, 화면 밖으로 밀리지 않음)
-  const s = STORES.find(x => x.id === ST.pin), p = pinInfo(s, f), b = bestMenu(s, f);
+  const s = byId(ST.pin), p = pinInfo(s, f), b = bestMenu(s, f);
   const back = `<button class="btn btn--quiet btn--sm" type="button" data-act="closepin">목록으로<span class="sr-only"> (가게 정보 닫기)</span></button>`;
   let body;
   if (b) body = `<ul class="plain" role="list">${labelCard(s, b, 0, 'pin')}</ul>`;
@@ -125,8 +137,11 @@ function pinView(f) { // 핀을 고르면 시트 안에 그 가게를 보여 준
 function listView(f, visible) {
   const ranked = visible.filter(s => !s.gray).map(s => ({ s, b: bestMenu(s, f) })).filter(x => x.b).sort((a, b) => a.b.u.v - b.b.u.v);
   const nw = visible.filter(s => !s.gray && !bestMenu(s, f)).map(s => ({ s, ms: noWeight(s, f) })).filter(x => x.ms.length);
-  let h = `<div class="sheet__title"><h2 id="sheet-title">100g당 싼 순</h2><p>${f.part} ${f.type} ${f.origin} ${ranked.length}곳</p></div>`;
-  if (ST.mapState === '빈 목록' || (!ranked.length && !nw.length)) return h + `<div class="empty"><p>이 조건의 메뉴를 확인한 가게가 아직 없어요.</p><p>다른 부위나 종류를 골라 보세요.</p></div>`;
+  let h = `<div class="sheet__title"><h2 id="sheet-title">100g당 싼 순</h2><p>${f.part} ${f.type} ${f.origin} ${ranked.length}곳${ST.searching ? ' · 다시 찾는 중…' : ''}</p></div>`;
+  if (ST.mapState === '빈 목록' || (!ranked.length && !nw.length)) {
+    const n = visible.length;
+    return h + `<div class="empty"><p>이 조건의 메뉴를 확인한 가게가 아직 없어요.</p><p>${LIVE ? (n ? `지도에 고기집 ${n}곳이 있지만 아직 메뉴를 확인하지 않았어요. 핀을 누르면 카카오맵 정보를 볼 수 있어요.` : '이 지도 안에서 고기집을 찾지 못했어요. 지도를 옮기거나 넓혀 보세요.') : '다른 부위나 종류를 골라 보세요.'}</p></div>`;
+  }
   h += `<ol class="ranked" role="list">${ranked.map((x, i) => labelCard(x.s, x.b, i + 1, 'list')).join('')}</ol>`;
   if (nw.length) {
     h += `<h3 class="group-title">중량 미표기</h3><p class="group-note">100g당 가격을 계산할 수 없어요.</p><ul class="plain" role="list">${nw.map(x => `<li class="label label--plain">
@@ -140,17 +155,18 @@ function viewMap() {
   const st = ST.mapState, f = ST.filter;
   const visible = st === '카카오 오류' ? STORES.filter(s => !s.gray) : STORES;
   let pins = '';
-  if (st === '정상' || st === '빈 목록' || st === '카카오 오류') {
+  if (!LIVE && (st === '정상' || st === '빈 목록' || st === '카카오 오류')) {
     pins = visible.map(s => { const p = pinInfo(s, f);
       return `<button class="pin pin--${p.kind}" type="button" style="left:${s.x}%;top:${s.y}%" data-act="pin" data-id="${s.id}" data-from="map" aria-label="${esc(p.aria)}" aria-expanded="${ST.pin === s.id}"${ST.pin === s.id ? ' aria-controls="sheet"' : ''}>${p.text}</button>`; }).join('');
   }
   let sheet;
   if (st === '위치 거부' || st === '지역 밖') {
     const msg = st === '위치 거부' ? '위치를 쓰지 않아도 괜찮아요. 어느 동네부터 볼까요?' : '아직 이 지역은 준비 중이에요. 지금은 인천 미추홀구·남동구만 볼 수 있어요.';
-    sheet = `<div class="empty"><p>${msg}</p><div class="actions"><button class="btn btn--primary" type="button" data-act="area">주안역 주변 보기</button><button class="btn" type="button" data-act="area">구월동 보기</button></div></div>`;
+    sheet = `<div class="empty"><p>${msg}</p><div class="actions"><button class="btn btn--primary" type="button" data-act="area" data-area="juan">주안역 주변 보기</button><button class="btn" type="button" data-act="area" data-area="guwol">구월동 보기</button></div></div>`;
   } else if (st === '로딩') sheet = `<p class="loading" role="status">주변 고기집을 찾고 있어요…</p>`;
   else sheet = (st === '카카오 오류' ? `<div class="banner" role="status"><strong>지금은 가게 목록을 불러올 수 없어요. 확인해 둔 가게만 보여 드릴게요.</strong><button class="btn btn--sm" type="button" data-act="retry">다시 불러오기</button></div>` : '')
-    + (ST.pin ? pinView(f) : listView(f, visible));
+    + (NO_DB ? `<p class="banner banner--info" role="note">가격 정보는 아직 연결 전이에요. 지금은 지도에서 찾은 고기집만 보여요.</p>` : '')
+    + (ST.pin && byId(ST.pin) ? pinView(f) : listView(f, visible));
   const tray = ST.cmpIds.length ? `<div class="tray"><span>비교 ${ST.cmpIds.length}곳</span><button class="btn btn--primary btn--sm" type="button" data-act="tab" data-tab="cmp" data-from="tray">비교 보기</button></div>` : '';
   const sheetLabel = { peek: '목록 펼치기', half: '목록 더 펼치기', full: '목록 접기' }[ST.sheet];
   return `<div class="mapview">
@@ -160,8 +176,9 @@ function viewMap() {
       <button class="sheet__handle" type="button" data-act="sheet" aria-label="${sheetLabel}"><span aria-hidden="true"></span></button>
       <div class="sheet__body" id="sheet-body">${sheet}</div>${tray}
     </section>
-    <p class="sr-only" aria-live="polite" id="sheet-status">${ST.pin ? `${esc(STORES.find(s => s.id === ST.pin).name)} 정보를 목록 자리에 보여 줘요` : ''}</p>
-    <section class="map" aria-label="고기집 지도 (샘플)">${MAP_SVG}<span class="station" aria-hidden="true">주안역</span><div role="group" aria-label="지도 핀">${pins}</div></section>
+    <p class="sr-only" aria-live="polite" id="sheet-status">${ST.pin && byId(ST.pin) ? `${esc(byId(ST.pin).name)} 정보를 목록 자리에 보여 줘요` : ''}</p>
+    ${LIVE ? `<section class="map map--kakao" aria-label="고기집 지도" id="map-host"></section>`
+      : `<section class="map" aria-label="고기집 지도 (샘플)">${MAP_SVG}<span class="station" aria-hidden="true">주안역</span><div role="group" aria-label="지도 핀">${pins}</div></section>`}
   </div>`;
 }
 
@@ -179,7 +196,7 @@ function pickerHtml(f) { // D29
   </section>`;
 }
 function trayChips() { // 담은 가게 칩 (× 로 빼기) + 가게 추가
-  const sel = ST.cmpIds.map(id => STORES.find(s => s.id === id));
+  const sel = ST.cmpIds.map(byId).filter(Boolean);
   return `<div class="cmptray">${sel.map(s => `<button class="cchip" type="button" data-act="cmp" data-id="${s.id}" data-from="chip" aria-label="${esc(s.name)} 비교에서 빼기">${nameTag(s)}<span aria-hidden="true">×</span></button>`).join('')}
     <button class="btn btn--primary btn--sm" type="button" data-act="picker" data-from="add" aria-expanded="${ST.picker}"${ST.picker ? ' aria-controls="picker"' : ''}><span aria-hidden="true">+ </span>가게 추가</button></div>`;
 }
@@ -199,7 +216,7 @@ function siseBar(rows, sise) { // 시세 막대
     <p class="sise__legend">세로선이 동네 시세(반경 1km 같은 고기 가게들의 중간값)예요. 초록 점은 더 싸고, 주황 점은 더 비싸요.</p></section>`;
 }
 function viewCmp() {
-  const sel = ST.cmpIds.map(id => STORES.find(s => s.id === id));
+  const sel = ST.cmpIds.map(byId).filter(Boolean);
   if (!sel.length) {
     return `<div class="screen-pad"><div class="empty"><p>아직 비교할 가게가 없어요.</p><p>“가게 추가”를 눌러 2~3곳을 골라 보세요.</p>
       <div class="actions"><button class="btn btn--primary" type="button" data-act="picker" data-from="add" aria-expanded="${ST.picker}"${ST.picker ? ' aria-controls="picker"' : ''}><span aria-hidden="true">+ </span>가게 추가</button><button class="btn" type="button" data-act="tab" data-tab="map" data-from="empty">목록으로 가기</button></div></div>
@@ -260,7 +277,7 @@ function viewCmp() {
 
 // ---------- ③ 즐겨찾기 ----------
 function viewFav() {
-  const list = STORES.filter(s => ST.favs[s.id]);
+  const list = Object.keys(ST.favs).filter(id => ST.favs[id]).map(byId).filter(Boolean);
   if (!list.length) return `<div class="screen-pad"><div class="empty"><p>아직 즐겨찾기한 가게가 없어요.</p><p>가게 라벨의 ☆를 누르면 여기에 모여요.</p><div class="actions"><button class="btn btn--primary" type="button" data-act="tab" data-tab="map" data-from="empty">목록으로 가기</button></div></div></div>`;
   const f = ST.filter;
   return `<div class="screen-pad"><p class="screen-note">즐겨찾기는 이 폰에만 저장돼요. ${f.part} ${f.type} ${f.origin} 기준으로 보여 줘요.</p><ul class="plain" role="list">${list.map(s => { const b = bestMenu(s, f);
@@ -269,7 +286,8 @@ function viewFav() {
 
 // ---------- ④ 가게 상세 ----------
 function viewDetail() {
-  const s = STORES.find(x => x.id === ST.detailId) || STORES[0];
+  const s = byId(ST.detailId) || STORES[0];
+  if (!s) return `<div class="screen-pad"><div class="empty"><p>가게 정보를 찾지 못했어요.</p><div class="actions"><button class="btn btn--primary" type="button" data-act="tab" data-tab="map" data-from="empty">목록으로 가기</button></div></div></div>`;
   const fav = !!ST.favs[s.id];
   const ranked = s.menus.filter(m => PARTS.includes(m.part) && TYPES.includes(m.type));
   const others = s.menus.filter(m => !ranked.includes(m));
@@ -282,7 +300,7 @@ function viewDetail() {
       <div><dt>판매가</dt><dd>${m.price ? won(m.price) : '-'}</dd></div></dl>
       <p class="label__meta">메뉴판 표기: ${shown}</p>
       ${u && u.mismatch ? `<p class="note-user">메뉴판에는 100g당 ${won(u.label)}으로 적혀 있지만 계산하면 ${won(u.v)}이에요. 순위에는 계산값을 써요.</p>${openq('표기값과 계산값이 다를 때 어느 쪽을 쓸지는 아직 임시 규칙 [기획 열린 질문 Q2]')}` : ''}</div></li>`; };
-  let h = `<div class="screen-pad"><div class="detail-top"><p class="detail-meta">${s.dist}m · 메뉴 확인일 ${s.checked} ${staleTag(s)}</p>
+  let h = `<div class="screen-pad"><div class="detail-top"><p class="detail-meta">${s.dist}m · ${s.checked ? `메뉴 확인일 ${s.checked} ${staleTag(s)}` : '아직 메뉴를 확인하지 않은 가게예요.'}</p>
     ${s.memo ? `<p class="detail-memo">${esc(s.memo)}</p>` : ''}
     <div class="actions">${ranked.some(m => unit(m)) ? cmpBtn(s, 'detail', 'btn--primary') : ''}
     <button class="btn" type="button" data-act="fav" data-id="${s.id}" data-from="detailfav"><span aria-hidden="true">${fav ? '★' : '☆'} </span>${fav ? '즐겨찾기 해제' : '즐겨찾기'}</button>
@@ -363,7 +381,7 @@ function save() {
   const c = check();
   if (c.err) { ST.formMsg = { ok: false, text: c.err, field: c.fields && c.fields[0] }; return; }
   if (ST.saveFails) { ST.formMsg = { ok: false, text: '저장하지 못했어요. 인터넷 연결을 확인하고 다시 저장해 주세요. 입력한 내용은 그대로 있어요.' }; return; }
-  const F = ST.form, s = STORES.find(x => x.id === F.store), num = x => x === '' ? null : Number(x);
+  const F = ST.form, s = byId(F.store), num = x => x === '' ? null : Number(x);
   s.gray = false; s.checked = F.date; if (F.memo) s.memo = F.memo;
   s.menus.push({ name: F.name || F.part, part: F.part, type: F.type, aged: F.aged, origin: F.origin, p100: num(F.p100), w: num(F.price) ? num(F.w) : null, price: num(F.price) });
   ST.formMsg = { ok: true, text: '저장했어요. 지도에 바로 반영돼요.' };
@@ -392,7 +410,7 @@ function render(opts) {
   opts = opts || {};
   const key = opts.focusMain ? null : focusKey();
   const scr = ST.screen;
-  const t = scr === 'detail' ? [STORES.find(s => s.id === ST.detailId).name, ''] : TITLES[scr];
+  const t = scr === 'detail' ? [(byId(ST.detailId) || { name: '가게 상세' }).name, ''] : scr === 'map' ? ['고기 레이더', ST.where] : TITLES[scr];
   document.getElementById('title').textContent = t[0];
   document.getElementById('where').textContent = t[1];
   document.title = scr === 'map' ? '고기 레이더' : `${t[0]} - 고기 레이더`;
@@ -401,7 +419,8 @@ function render(opts) {
   document.getElementById('back-label').textContent = scr === 'admin' ? '돌아가기' : '목록으로';
   const main = document.getElementById('screen');
   main.className = 'screen' + (scr === 'map' ? ' screen--map' : '');
-  main.innerHTML = !DEMO ? viewSetup() : ({ map: viewMap, cmp: viewCmp, fav: viewFav, detail: viewDetail, admin: viewAdmin })[scr]();
+  main.innerHTML = !DEMO && !LIVE ? viewSetup() : ({ map: viewMap, cmp: viewCmp, fav: viewFav, detail: viewDetail, admin: viewAdmin })[scr]();
+  if (LIVE && scr === 'map') livePins();
   document.querySelectorAll('.tabbar button').forEach(b => {
     const on = b.dataset.tab === scr || (scr === 'detail' && b.dataset.tab === ST.prev);
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -460,7 +479,11 @@ document.addEventListener('click', e => {
     case 'detail': ST.detailId = id; ST.screen = 'detail'; ST.pin = null; ST.menuOpen = false; render({ focusMain: true }); return;
     case 'fav': ST.favs[id] = !ST.favs[id]; break;
     case 'picker': ST.picker = !ST.picker; break;
-    case 'area': case 'retry': ST.mapState = '정상'; render({ focusMain: true }); return;
+    case 'area': {
+      if (LIVE) { const a = AREAS[el.dataset.area] || AREAS.juan; ST.area = el.dataset.area; ST.where = a.name; ST.origin = { lat: a.lat, lng: a.lng }; ST.locState = '정상'; ST.mapState = '정상'; ST.pin = null; KMap.setCenter(a); }
+      else ST.mapState = '정상';
+      render({ focusMain: true }); return; }
+    case 'retry': if (LIVE) { startLive(); return; } ST.mapState = '정상'; render({ focusMain: true }); return;
     case 'login': ST.adminState = '입력'; render({ focus: '#store' }); return;
     case 'closetoast': { document.getElementById('toast').innerHTML = ''; const k = ST.toastFrom; ST.toastFrom = null; const t = k && findKey(k); (t || document.getElementById('screen')).focus(); return; }
     default: return;
@@ -528,4 +551,56 @@ window.addEventListener('beforeunload', e => { if (ST.screen === 'admin' && ST.d
   });
 })();
 
+// ---------- 실제 지도 (묶음 2) ----------
+function livePins() { // 화면을 다시 그린 뒤: 지도 요소를 새 자리에 붙이고 핀을 다시 만든다
+  const host = document.getElementById('map-host');
+  if (!host || !window.KMap || !KMap.ready()) return;
+  KMap.mount(host);
+  const f = ST.filter;
+  KMap.setPins(STORES.map(s => { const p = pinInfo(s, f); return { id: s.id, lat: s.lat, lng: s.lng, kind: p.kind, text: p.text, aria: p.aria, expanded: ST.pin === s.id }; }));
+}
+function fromPlace(p) { // 카카오 장소 → 화면용 가게 (메모리만). 가격 정보는 묶음 3에서 Supabase와 합친다
+  const s = KNOWN.get(p.id) || { id: p.id, name: p.place_name, place_url: p.place_url, menus: [], gray: true, checked: null, memo: '' };
+  s.lat = Number(p.y); s.lng = Number(p.x);
+  s.dist = Math.round(distM(ST.origin, s) / 10) * 10;
+  KNOWN.set(s.id, s);
+  return s;
+}
+const liveHandlers = {
+  onSearchStart() { ST.searching = true; },
+  onResults(places) {
+    ST.searching = false;
+    STORES = places.filter(isMeatPlace).map(fromPlace).sort((a, b) => a.dist - b.dist);
+    if (ST.mapState === '로딩' || ST.mapState === '카카오 오류') ST.mapState = ST.locState || '정상';
+    if (ST.pin && !STORES.some(s => s.id === ST.pin)) ST.pin = null;
+    if (ST.screen === 'map') render(); // 포커스는 render가 그대로 지킨다
+  },
+  onError() { ST.searching = false; ST.mapState = '카카오 오류'; if (ST.screen === 'map') render(); },
+  onIdle() { KMap.updatePinFocus(); },
+  onPin(id) { ST.pin = ST.pin === id ? null : id; if (ST.pin && ST.sheet === 'peek') ST.sheet = 'half'; render({ focus: `[data-act="pin"][data-id="${id}"]` }); },
+};
+function locate() { // R2: 허용 → 내 위치 / 거부·실패 → 주안역·구월동 고르기 / 지역 밖 → 준비 중 안내 (D26-16)
+  if (!navigator.geolocation) { ST.locState = '위치 거부'; ST.mapState = '위치 거부'; render(); return; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    const me = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    if (inService(me)) { ST.origin = me; ST.where = '내 위치 주변'; ST.locState = '정상'; KMap.setCenter(me); }
+    else { ST.locState = '지역 밖'; ST.mapState = '지역 밖'; }
+    if (ST.screen === 'map') render();
+  }, () => {
+    ST.locState = '위치 거부'; ST.mapState = '위치 거부';
+    if (ST.screen === 'map') render();
+  }, { timeout: 8000, maximumAge: 600000 });
+}
+function startLive() {
+  if (!window.KMap) { ST.mapState = '카카오 오류'; render(); return; } // js/kakao.js를 못 불러온 경우
+  ST.mapState = '로딩'; render();
+  KMap.init(CONFIG.KAKAO_JS_KEY, AREAS.juan, liveHandlers).then(() => {
+    render(); // 지도 요소를 붙인다
+    KMap.search();
+    if (!ST.locAsked) { ST.locAsked = true; locate(); }
+  }).catch(() => { ST.mapState = '카카오 오류'; render(); });
+}
+window.addEventListener('resize', () => { if (LIVE) { KMap.relayout(); KMap.updatePinFocus(); } });
+
 render();
+if (LIVE) startLive();

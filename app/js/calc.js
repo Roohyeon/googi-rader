@@ -96,7 +96,20 @@
     return `<strong>${esc(josa(more.s.name, '은는'))}</strong> ${g}g 더 주지만 ${won10(-gain)} 비싸게 받는 셈이에요.`;
   }
 
-  const api = { PARTS, TYPES, ORIGINS, fmt, won, won10, esc, unit, meatKey, matches, bestMenu, noWeight, kstDate, addMonthsClamp, isStale, pinInfo, dongSise, gapRatio, isRecommend, josa, gainText };
+
+  // 두 지점 사이 거리(m). a, b: { lat, lng } (카카오 검색 결과 좌표, 메모리에서만 씀 D31)
+  function distM(a, b) {
+    const R = 6371000, rad = d => d * Math.PI / 180;
+    const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+  // 카카오 장소가 고기집인지 (임시 규칙 Q-N7: 카테고리에 "육류,고기")
+  const isMeatPlace = p => !!p && typeof p.category_name === 'string' && p.category_name.includes('육류,고기');
+  // 미추홀구·남동구 대략 범위 (임시 규칙 D26-16: 경계는 사각형 근사)
+  const inService = p => !!p && p.lat >= 37.39 && p.lat <= 37.49 && p.lng >= 126.63 && p.lng <= 126.78;
+
+  const api = { distM, isMeatPlace, inService, PARTS, TYPES, ORIGINS, fmt, won, won10, esc, unit, meatKey, matches, bestMenu, noWeight, kstDate, addMonthsClamp, isStale, pinInfo, dongSise, gapRatio, isRecommend, josa, gainText };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Calc = api;
 })(typeof window !== 'undefined' ? window : globalThis);

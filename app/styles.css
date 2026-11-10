@@ -29,6 +29,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; } /* .btn 같은 display 규칙이 hidden 속성을 이기지 못하게 (디자인 시안의 버그 수정) */
 html, body { height: 100%; }
 html { -webkit-text-size-adjust: 100%; scroll-padding-bottom: calc(var(--tabbar-h) + var(--s4)); }
 @media (pointer: fine) { html { overscroll-behavior: none; } }
@@ -297,3 +298,11 @@ p.panel { font-size: 14px; margin: 0; }
 .setup p { margin: 0 0 var(--s2); }
 .setup-list { margin: 0 0 var(--s3); padding-left: var(--s5); }
 .setup code { font-family: ui-monospace, Consolas, monospace; font-size: 14px; background: #F1F2F4; padding: 0 var(--s1); border-radius: 2px; }
+
+/* 실제 카카오 지도 (dev 묶음 2) */
+.map--kakao { background: var(--color-map); }
+.kmap { position: absolute; inset: 0; }
+/* 카카오 지도는 밝은 바탕이라 핀 둘레에 숯색 테두리를 둘러 구분한다 (디자인과 달라진 점) */
+.map--kakao .pin { box-shadow: 0 0 0 2px var(--color-bg); white-space: nowrap; }
+.map--kakao .pin::after { background: var(--color-bg); }
+.banner--info { display: block; margin: 0 0 var(--s3); padding: var(--s2) var(--s3); background: var(--color-surface); color: var(--color-ink); border-radius: var(--radius); font-size: 14px; }

@@ -1,4 +1,4 @@
-// 계산 규칙 자동 테스트. 실행: node --test app/tests
+// 계산 규칙 자동 테스트. 실행: node --test "app/tests/*.test.js"
 // 테스트 값은 기획 문서(planning/googi-radar/03-spec.md)의 수용 기준 예시 숫자를 그대로 쓴다.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -100,4 +100,15 @@ test('D28-1·2: 핀 종류', () => {
   assert.equal(C.pinInfo({ name: 'g', gray: true }, f).text, '정보 없음');
   assert.equal(C.pinInfo({ name: '항정', menus: [{ part: '항정살', type: '생고기', origin: '국내산', w: 150, price: 18000 }] }, f).text, '다른 메뉴만');
   assert.equal(C.pinInfo({ name: '미표기', menus: [{ part: '삼겹살', type: '생고기', origin: '국내산', price: 16000 }] }, f).text, '중량 미표기');
+});
+
+test('거리: 위도 0.001도 ≈ 111m', () => { const d = C.distM({ lat: 37, lng: 127 }, { lat: 37.001, lng: 127 }); assert.ok(Math.abs(d - 111.2) < 0.5, String(d)); });
+test('고기집 거르기: 육류,고기 카테고리만', () => {
+  assert.strictEqual(C.isMeatPlace({ category_name: '음식점 > 한식 > 육류,고기 > 삼겹살' }), true);
+  assert.strictEqual(C.isMeatPlace({ category_name: '음식점 > 한식 > 냉면' }), false);
+  assert.strictEqual(C.isMeatPlace({}), false);
+});
+test('서비스 지역: 주안역 안, 서울역 밖', () => {
+  assert.strictEqual(C.inService({ lat: 37.4649, lng: 126.6807 }), true);
+  assert.strictEqual(C.inService({ lat: 37.5547, lng: 126.9707 }), false);
 });

@@ -57,6 +57,6 @@
 3. **도메인 등록:** [앱] > [플랫폼 키] > [JavaScript 키] → **JavaScript SDK 도메인**(예전 이름: 플랫폼 > Web > 사이트 도메인)에 `http://localhost:3000` 입력(로컬 실행 주소, 배포 주소는 5단계에서 추가)
 4. **카카오맵 사용 설정:** 앱 → "카카오맵"(또는 제품 설정) 메뉴에서 사용 설정을 켬 (2024년 이후 생성 앱은 활성화가 필요하다는 공지 있음 — 화면 이름은 바뀔 수 있음)
 5. **Supabase 가입·프로젝트 만들기:** https://supabase.com → GitHub 계정 등으로 가입 → "New project" → 이름 `googi-radar`, 비밀번호 저장, 지역은 가까운 곳(예: Northeast Asia (Seoul)) → 생성
-6. **Supabase 키 복사:** 프로젝트 → "Project Settings" → "API" → **Project URL**을 `SUPABASE_URL`에, **anon public** 키를 `SUPABASE_ANON_KEY`에 붙여 넣기 (**service_role 키는 복사하지 않음**)
+6. **Supabase 키 복사:** 프로젝트 → "Project Settings" → "Data API"의 **Project URL**을 `SUPABASE_URL`에, "API Keys"의 **Publishable key**(`sb_publishable_`로 시작, 예전 이름 anon public)를 `SUPABASE_ANON_KEY`에 붙여 넣기 (**service_role 키는 복사하지 않음**)
 7. (2단계 설계 확인 뒤) Supabase에 표와 접근 규칙을 만드는 SQL을 제가 드리면 "SQL Editor"에 붙여 넣고 실행
 8. `app/config.example.js`를 같은 폴더에 `config.js`로 복사한 뒤 위 값들을 넣기. 키를 대화창에 붙여 주시면 제가 config.js에만 넣고 기록에는 앞 4자리만 남김
