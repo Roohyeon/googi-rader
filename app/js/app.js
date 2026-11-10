@@ -18,7 +18,17 @@ const missingKeys = () => REQUIRED_KEYS.filter(([k]) => !CONFIG[k] || !String(CO
 const DEMO = /[?&]demo=1(&|$)/.test(location.search);
 const hasKey = k => !!CONFIG[k] && !!String(CONFIG[k]).trim();
 const LIVE = !DEMO && hasKey('KAKAO_JS_KEY'); // 카카오 키가 있으면 실제 지도. Supabase 키는 묶음 3부터 필요
-const NO_DB = LIVE && !(hasKey('SUPABASE_URL') && hasKey('SUPABASE_ANON_KEY'));
+let NO_DB = LIVE && !(hasKey('SUPABASE_URL') && hasKey('SUPABASE_ANON_KEY'));
+let KEY_PROBLEM = '';
+if (LIVE && !NO_DB) {
+  try { DB.init(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY); }
+  catch (e) {
+    NO_DB = true;
+    KEY_PROBLEM = e.message === 'secret-key' ? 'config.js의 SUPABASE_ANON_KEY에 비밀 키(Secret key)가 들어 있어요. 연결하지 않았어요. Publishable key로 바꾸고, Supabase에서 비밀 키를 새로 발급해 주세요.'
+      : e.message === 'bad-url' ? 'config.js의 SUPABASE_URL 모양이 맞지 않아요. https://xxxx.supabase.co 형태로 넣어 주세요.'
+      : '가격 정보 연결을 준비하지 못했어요.';
+  }
+}
 const TODAY = new Date(); // 실제 오늘 (오래된 정보 판정은 한국 시간 기준, calc.isStale)
 
 // ---------- 데이터 ----------
@@ -29,7 +39,8 @@ const byId = id => KNOWN.get(id);
 // 동네 기준점 (D26-11). 좌표는 임시값: 주안역, 구월동 로데오거리
 const AREAS = { juan: { name: '주안역 주변', lat: 37.4649, lng: 126.6807 }, guwol: { name: '구월동 주변', lat: 37.4486, lng: 126.7019 } };
 const nameTag = s => `<span translate="no">${esc(s.name)}</span>`;
-const placeUrl = s => s.place_url || `https://place.map.kakao.com/${encodeURIComponent(s.id)}`;
+const placeUrl = s => /^https:\/\/place\.map\.kakao\.com\/\d{1,20}$/.test(s.place_url || '') ? s.place_url : `https://place.map.kakao.com/${encodeURIComponent(s.id)}`;
+const distTxt = s => s.dist != null && isFinite(s.dist) ? `${s.dist}m` : '';
 const kakaoLink = (s, cls) => `<a class="${cls || 'btn btn--quiet'}" href="${esc(placeUrl(s))}" target="_blank" rel="noopener"><span translate="no">카카오맵</span>에서 리뷰 보기<span class="sr-only"> (${esc(s.name)}, 새 창)</span></a>`;
 const isStale = s => C.isStale(s.checked, TODAY);
 const pinInfo = (s, f) => C.pinInfo(s, f);
@@ -38,7 +49,8 @@ const dist2 = (a, b) => a.lat != null ? distM(a, b) : Math.hypot((a.x - b.x) * 2
 const centerOf = sel => sel[0].lat != null
   ? { lat: sel.reduce((t, s) => t + s.lat, 0) / sel.length, lng: sel.reduce((t, s) => t + s.lng, 0) / sel.length }
   : { x: sel.reduce((t, s) => t + s.x, 0) / sel.length, y: sel.reduce((t, s) => t + s.y, 0) / sel.length };
-const dongSise = (sel, f) => C.dongSise(sel, STORES.filter(s => !s.gray), f, dist2, centerOf);
+const hasPos = s => s.lat != null || s.x != null;
+const dongSise = (sel, f) => sel.every(hasPos) ? C.dongSise(sel, STORES.filter(s => !s.gray && hasPos(s)), f, dist2, centerOf) : null; // 좌표 없는 가게가 끼면 표시 안 함
 
 // ---------- 설정 안내 화면 ----------
 function viewSetup() {
@@ -57,7 +69,7 @@ const ST = {
   area: 'juan', where: AREAS.juan.name, origin: { lat: AREAS.juan.lat, lng: AREAS.juan.lng }, searching: false, locState: null, locAsked: false,
   filter: { part: '삼겹살', type: '생고기', origin: '국내산' },
   cmpIds: DEMO ? ['s1', 's2', 's3'] : [], cmpMeat: null, basis: '가성비', picker: false,
-  pin: null, sheet: 'half', detailId: DEMO ? 's1' : null, favs: DEMO ? { s2: true } : {}, form: null, formMsg: null, saveFails: false, dirty: false,
+  dbError: false, pin: null, sheet: 'half', detailId: DEMO ? 's1' : null, favs: DEMO ? { s2: true } : {}, form: null, formMsg: null, saveFails: false, dirty: false,
   showNotes: false, menuOpen: false, toastFrom: null,
 };
 const DEV = [
@@ -82,10 +94,10 @@ function toggleCmp(id) {
   ST.cmpMeat = null;
 }
 const cmpBtn = (s, from, cls) => { const inCmp = ST.cmpIds.includes(s.id);
-  return `<button class="btn ${cls || ''}" type="button" data-act="cmp" data-id="${s.id}" data-from="${from}">${inCmp ? '비교에서 빼기' : '비교에 넣기'}<span class="sr-only"> (${esc(s.name)})</span></button>`; };
-const detailBtn = (s, from) => `<button class="btn btn--quiet" type="button" data-act="detail" data-id="${s.id}" data-from="${from}">상세 보기<span class="sr-only"> (${esc(s.name)})</span></button>`;
+  return `<button class="btn ${cls || ''}" type="button" data-act="cmp" data-id="${esc(s.id)}" data-from="${from}">${inCmp ? '비교에서 빼기' : '비교에 넣기'}<span class="sr-only"> (${esc(s.name)})</span></button>`; };
+const detailBtn = (s, from) => `<button class="btn btn--quiet" type="button" data-act="detail" data-id="${esc(s.id)}" data-from="${from}">상세 보기<span class="sr-only"> (${esc(s.name)})</span></button>`;
 const starBtn = (s, from) => { const fav = !!ST.favs[s.id];
-  return `<button class="star" type="button" data-act="fav" data-id="${s.id}" data-from="${from}" aria-pressed="${fav}" aria-label="${esc(s.name)} 즐겨찾기"><span aria-hidden="true">${fav ? '★' : '☆'}</span></button>`; };
+  return `<button class="star" type="button" data-act="fav" data-id="${esc(s.id)}" data-from="${from}" aria-pressed="${fav}" aria-label="${esc(s.name)} 즐겨찾기"><span aria-hidden="true">${fav ? '★' : '☆'}</span></button>`; };
 const staleTag = s => isStale(s) ? '<span class="warn"><span aria-hidden="true">⚠ </span>오래된 정보일 수 있어요</span>' : '';
 
 // ---------- 라벨 카드 ----------
@@ -95,17 +107,17 @@ function labelCard(s, b, rank, from) {
     <div class="label__head">
       ${rank ? `<span class="label__rank">${rank}<span class="sr-only">위</span></span>` : ''}
       <h3 class="label__name">${nameTag(s)}</h3>
-      <span class="label__dist num">${s.dist}m</span>
+      <span class="label__dist num">${distTxt(s)}</span>
       ${starBtn(s, from)}
     </div>
     <div class="label__body">
-    <p class="label__menu">${esc(m.name)}${m.aged ? '<span class="tag">숙성</span>' : ''} <span class="t-muted">${m.origin}</span></p>
+    <p class="label__menu">${esc(m.name)}${m.aged ? '<span class="tag">숙성</span>' : ''} <span class="t-muted">${esc(m.origin)}</span></p>
     <dl class="cells">
       <div><dt>중량</dt><dd>${m.w && m.price ? m.w + 'g' : '-'}</dd></div>
       <div class="unit"><dt>100g당</dt><dd>${fmt(b.u.v)}<small>원</small></dd></div>
       <div><dt>판매가</dt><dd>${m.w && m.price ? won(m.price) : '-'}</dd></div>
     </dl>
-    <p class="label__meta">메뉴 확인일 ${s.checked} ${staleTag(s)}</p>
+    <p class="label__meta">메뉴 확인일 ${esc(s.checked)} ${staleTag(s)}</p>
     <div class="actions">${cmpBtn(s, from)}${detailBtn(s, from)}</div>
     </div>
   </li>`;
@@ -129,7 +141,7 @@ function pinView(f) { // 핀을 고르면 시트 안에 그 가게를 보여 준
   const back = `<button class="btn btn--quiet btn--sm" type="button" data-act="closepin">목록으로<span class="sr-only"> (가게 정보 닫기)</span></button>`;
   let body;
   if (b) body = `<ul class="plain" role="list">${labelCard(s, b, 0, 'pin')}</ul>`;
-  else body = `<div class="label label--plain"><div class="label__head"><h3 class="label__name">${nameTag(s)}</h3><span class="label__dist num">${s.dist}m</span>${s.gray ? '' : starBtn(s, 'pin')}</div>
+  else body = `<div class="label label--plain"><div class="label__head"><h3 class="label__name">${nameTag(s)}</h3><span class="label__dist num">${distTxt(s)}</span>${s.gray ? '' : starBtn(s, 'pin')}</div>
     <div class="label__body"><p class="label__menu">${s.gray ? '정보 없음. 아직 메뉴를 확인하지 않은 가게예요.' : p.text === '필터 밖' ? '이 필터에 맞는 메뉴가 없어요.' : p.text}</p>
     <div class="actions">${s.gray ? kakaoLink(s) : detailBtn(s, 'pin')}</div></div></div>`;
   return `<div class="sheet__title"><h2 id="sheet-title">선택한 가게</h2>${back}</div>${body}`;
@@ -145,7 +157,7 @@ function listView(f, visible) {
   h += `<ol class="ranked" role="list">${ranked.map((x, i) => labelCard(x.s, x.b, i + 1, 'list')).join('')}</ol>`;
   if (nw.length) {
     h += `<h3 class="group-title">중량 미표기</h3><p class="group-note">100g당 가격을 계산할 수 없어요.</p><ul class="plain" role="list">${nw.map(x => `<li class="label label--plain">
-      <div class="label__head"><h4 class="label__name">${nameTag(x.s)}</h4><span class="label__dist num">${x.s.dist}m</span></div>
+      <div class="label__head"><h4 class="label__name">${nameTag(x.s)}</h4><span class="label__dist num">${distTxt(x.s)}</span></div>
       <div class="label__body">${x.ms.map(m => `<p class="label__menu">${esc(m.name)} 1인분 <span class="num">${won(m.price)}</span></p>`).join('')}
       <div class="actions">${detailBtn(x.s, 'list')}</div></div></li>`).join('')}</ul>`;
   }
@@ -157,7 +169,7 @@ function viewMap() {
   let pins = '';
   if (!LIVE && (st === '정상' || st === '빈 목록' || st === '카카오 오류')) {
     pins = visible.map(s => { const p = pinInfo(s, f);
-      return `<button class="pin pin--${p.kind}" type="button" style="left:${s.x}%;top:${s.y}%" data-act="pin" data-id="${s.id}" data-from="map" aria-label="${esc(p.aria)}" aria-expanded="${ST.pin === s.id}"${ST.pin === s.id ? ' aria-controls="sheet"' : ''}>${p.text}</button>`; }).join('');
+      return `<button class="pin pin--${p.kind}" type="button" style="left:${s.x}%;top:${s.y}%" data-act="pin" data-id="${esc(s.id)}" data-from="map" aria-label="${esc(p.aria)}" aria-expanded="${ST.pin === s.id}"${ST.pin === s.id ? ' aria-controls="sheet"' : ''}>${p.text}</button>`; }).join('');
   }
   let sheet;
   if (st === '위치 거부' || st === '지역 밖') {
@@ -165,7 +177,9 @@ function viewMap() {
     sheet = `<div class="empty"><p>${msg}</p><div class="actions"><button class="btn btn--primary" type="button" data-act="area" data-area="juan">주안역 주변 보기</button><button class="btn" type="button" data-act="area" data-area="guwol">구월동 보기</button></div></div>`;
   } else if (st === '로딩') sheet = `<p class="loading" role="status">주변 고기집을 찾고 있어요…</p>`;
   else sheet = (st === '카카오 오류' ? `<div class="banner" role="status"><strong>지금은 가게 목록을 불러올 수 없어요. 확인해 둔 가게만 보여 드릴게요.</strong><button class="btn btn--sm" type="button" data-act="retry">다시 불러오기</button></div>` : '')
-    + (NO_DB ? `<p class="banner banner--info" role="note">가격 정보는 아직 연결 전이에요. 지금은 지도에서 찾은 고기집만 보여요.</p>` : '')
+    + (KEY_PROBLEM ? `<div class="banner" role="alert"><strong>${esc(KEY_PROBLEM)}</strong></div>`
+      : NO_DB ? `<p class="banner banner--info" role="note">가격 정보는 아직 연결 전이에요. 지금은 지도에서 찾은 고기집만 보여요.</p>` : '')
+    + (ST.dbError ? `<div class="banner" role="status"><strong>가격 정보를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.</strong><button class="btn btn--sm" type="button" data-act="retry">다시 불러오기</button></div>` : '')
     + (ST.pin && byId(ST.pin) ? pinView(f) : listView(f, visible));
   const tray = ST.cmpIds.length ? `<div class="tray"><span>비교 ${ST.cmpIds.length}곳</span><button class="btn btn--primary btn--sm" type="button" data-act="tab" data-tab="cmp" data-from="tray">비교 보기</button></div>` : '';
   const sheetLabel = { peek: '목록 펼치기', half: '목록 더 펼치기', full: '목록 접기' }[ST.sheet];
@@ -191,13 +205,13 @@ function pickerHtml(f) { // D29
     <div class="picker__head"><h2 id="picker-title">비교에 넣을 가게</h2><button class="btn btn--quiet btn--on-ink" type="button" data-act="picker" data-from="pickerhead" aria-expanded="true" aria-controls="picker">추가 목록 닫기</button></div>
     ${full ? '<p class="err">최대 3곳까지 비교할 수 있어요. 한 곳을 빼고 넣어 주세요.</p>' : ''}
     <p>${f.part} ${f.type} ${f.origin}, 100g당 싼 순. 정보 없음 가게는 넣을 수 없어요.</p>
-    ${cands.length ? `<ul role="list">${cands.map(x => `<li><span>${nameTag(x.s)} <span class="t-muted num">${x.s.dist}m</span><br><span class="t-muted">${x.b ? '100g당 ' + won(x.b.u.v) : '이 고기 없음'}</span></span>
-      <button class="btn" type="button" data-act="cmp" data-id="${x.s.id}" data-from="picker" ${full ? 'disabled' : ''} aria-label="${esc(x.s.name)} 비교에 넣기">넣기</button></li>`).join('')}</ul>` : '<p>더 넣을 수 있는 가게가 없어요.</p>'}
+    ${cands.length ? `<ul role="list">${cands.map(x => `<li><span>${nameTag(x.s)} <span class="t-muted num">${distTxt(x.s)}</span><br><span class="t-muted">${x.b ? '100g당 ' + won(x.b.u.v) : '이 고기 없음'}</span></span>
+      <button class="btn" type="button" data-act="cmp" data-id="${esc(x.s.id)}" data-from="picker" ${full ? 'disabled' : ''} aria-label="${esc(x.s.name)} 비교에 넣기">넣기</button></li>`).join('')}</ul>` : '<p>더 넣을 수 있는 가게가 없어요.</p>'}
   </section>`;
 }
 function trayChips() { // 담은 가게 칩 (× 로 빼기) + 가게 추가
   const sel = ST.cmpIds.map(byId).filter(Boolean);
-  return `<div class="cmptray">${sel.map(s => `<button class="cchip" type="button" data-act="cmp" data-id="${s.id}" data-from="chip" aria-label="${esc(s.name)} 비교에서 빼기">${nameTag(s)}<span aria-hidden="true">×</span></button>`).join('')}
+  return `<div class="cmptray">${sel.map(s => `<button class="cchip" type="button" data-act="cmp" data-id="${esc(s.id)}" data-from="chip" aria-label="${esc(s.name)} 비교에서 빼기">${nameTag(s)}<span aria-hidden="true">×</span></button>`).join('')}
     <button class="btn btn--primary btn--sm" type="button" data-act="picker" data-from="add" aria-expanded="${ST.picker}"${ST.picker ? ' aria-controls="picker"' : ''}><span aria-hidden="true">+ </span>가게 추가</button></div>`;
 }
 function siseBar(rows, sise) { // 시세 막대
@@ -257,7 +271,7 @@ function viewCmp() {
   const menuOf = r => r.b ? r.b.m : r.nw;
   let h = `<div class="screen-pad">${trayChips()}${ST.picker ? pickerHtml(f) : ''}
     <div class="cmp-controls"><label for="meat">어떤 고기를 비교할까요?</label>
-    <select id="meat" name="meat" data-act="meat" autocomplete="off">${keys.map(k => `<option value="${k}" ${k === ST.cmpMeat ? 'selected' : ''}>${k.replace(/·/g, ' ')}</option>`).join('')}</select>
+    <select id="meat" name="meat" data-act="meat" autocomplete="off">${keys.map(k => `<option value="${esc(k)}" ${k === ST.cmpMeat ? 'selected' : ''}>${esc(k.replace(/·/g, ' '))}</option>`).join('')}</select>
     <fieldset><legend>무엇을 기준으로 볼까요?</legend>${['가성비', '양', '가격'].map(b => `<label class="chip"><input type="radio" name="basis" value="${b}" data-act="basis" ${ST.basis === b ? 'checked' : ''}><span>${b}(${b === '가성비' ? '100g당' : '1인분'})</span></label>`).join('')}</fieldset></div>
     <section class="verdict" aria-labelledby="verdict-title"><h2 id="verdict-title">결론</h2><p class="verdict__main">${verdict}</p><div class="verdict__gain">${gains}</div></section>
     <div class="cmp-table-wrap" tabindex="0" role="region" aria-label="비교 표 (가로로 스크롤할 수 있어요)"><table class="cmp" id="cmp-table"><caption tabindex="-1">${part} ${type} ${origin}, ${ST.basis} 기준</caption>
@@ -267,8 +281,8 @@ function viewCmp() {
     <tr><th scope="row">100g당</th>${rows.map(r => `<td>${cell(r, r => r.b ? `<span class="unit">${won(r.b.u.v)}</span>` : '알 수 없음<br><span class="t-muted">(중량 미표기)</span>')}</td>`).join('')}</tr>
     <tr><th scope="row">1인분</th>${rows.map(r => `<td>${cell(r, r => { const m = menuOf(r); return m.w && m.price ? `${m.w}g<br>${won(m.price)}` : m.price ? `-<br>${won(m.price)}` : '-'; })}</td>`).join('')}</tr>
     <tr><th scope="row">동네 대비</th>${rows.map(r => `<td>${cell(r, r => { if (!r.b || sise == null) return '-'; const p = (r.b.u.v - sise) / sise * 100; return `<span class="${p < 0 ? 'cheap' : 'pricey'}">${Math.abs(p).toFixed(1)}% ${p < 0 ? '저렴' : '비쌈'}</span>`; })}</td>`).join('')}</tr>
-    <tr><th scope="row">거리</th>${rows.map(r => `<td>${r.s.dist}m</td>`).join('')}</tr>
-    <tr><th scope="row">메뉴 확인일</th>${rows.map(r => `<td>${r.s.checked}${isStale(r.s) ? '<br>' + staleTag(r.s) : ''}</td>`).join('')}</tr>
+    <tr><th scope="row">거리</th>${rows.map(r => `<td>${distTxt(r.s)}</td>`).join('')}</tr>
+    <tr><th scope="row">메뉴 확인일</th>${rows.map(r => `<td>${esc(r.s.checked || '-')}${r.s.checked && isStale(r.s) ? '<br>' + staleTag(r.s) : ''}</td>`).join('')}</tr>
     <tr><th scope="row">리뷰</th>${rows.map(r => `<td>${kakaoLink(r.s, 'tlink')}</td>`).join('')}</tr>
     </tbody></table></div>${siseBar(rows, sise)}`;
   if (ST.cmpMeat === '삼겹살·생고기·국내산') h += openq('참가격 인천 평균(100g ○○원)을 여기 보여줄 예정. 참가격 조사 기준 확인 전이라 값 없음 [기획 열린 질문 Q4, R12]');
@@ -281,7 +295,7 @@ function viewFav() {
   if (!list.length) return `<div class="screen-pad"><div class="empty"><p>아직 즐겨찾기한 가게가 없어요.</p><p>가게 라벨의 ☆를 누르면 여기에 모여요.</p><div class="actions"><button class="btn btn--primary" type="button" data-act="tab" data-tab="map" data-from="empty">목록으로 가기</button></div></div></div>`;
   const f = ST.filter;
   return `<div class="screen-pad"><p class="screen-note">즐겨찾기는 이 폰에만 저장돼요. ${f.part} ${f.type} ${f.origin} 기준으로 보여 줘요.</p><ul class="plain" role="list">${list.map(s => { const b = bestMenu(s, f);
-    return b ? labelCard(s, b, 0, 'fav') : `<li class="label label--plain"><div class="label__head"><h3 class="label__name">${nameTag(s)}</h3><span class="label__dist num">${s.dist}m</span>${starBtn(s, 'fav')}</div><div class="label__body"><p class="label__menu">이 필터에 맞는 메뉴가 없어요.</p><div class="actions">${detailBtn(s, 'fav')}</div></div></li>`; }).join('')}</ul></div>`;
+    return b ? labelCard(s, b, 0, 'fav') : `<li class="label label--plain"><div class="label__head"><h3 class="label__name">${nameTag(s)}</h3><span class="label__dist num">${distTxt(s)}</span>${starBtn(s, 'fav')}</div><div class="label__body"><p class="label__menu">이 필터에 맞는 메뉴가 없어요.</p><div class="actions">${detailBtn(s, 'fav')}</div></div></li>`; }).join('')}</ul></div>`;
 }
 
 // ---------- ④ 가게 상세 ----------
@@ -294,16 +308,16 @@ function viewDetail() {
   const line = m => { const u = unit(m);
     const shown = [m.p100 != null ? `100g ${won(m.p100)}` : '', m.w ? `1인분 ${m.w}g` : '', m.price ? `${m.w ? '' : '1인분 '}${won(m.price)}` : ''].filter(Boolean).join(', ');
     return `<li class="label"><div class="label__head"><h3 class="label__name">${esc(m.name)}</h3>${m.aged ? '<span class="tag tag--on-ink">숙성</span>' : ''}</div>
-      <div class="label__body"><p class="label__menu"><span class="t-muted">${m.part} ${m.type} ${m.origin}</span></p>
+      <div class="label__body"><p class="label__menu"><span class="t-muted">${esc(m.part)} ${esc(m.type)} ${esc(m.origin)}</span></p>
       <dl class="cells"><div><dt>중량</dt><dd>${m.w ? m.w + 'g' : '-'}</dd></div>
       <div class="unit"><dt>100g당</dt><dd>${u ? `${fmt(u.v)}<small>원</small>` : '<small>중량 미표기</small>'}</dd></div>
       <div><dt>판매가</dt><dd>${m.price ? won(m.price) : '-'}</dd></div></dl>
       <p class="label__meta">메뉴판 표기: ${shown}</p>
       ${u && u.mismatch ? `<p class="note-user">메뉴판에는 100g당 ${won(u.label)}으로 적혀 있지만 계산하면 ${won(u.v)}이에요. 순위에는 계산값을 써요.</p>${openq('표기값과 계산값이 다를 때 어느 쪽을 쓸지는 아직 임시 규칙 [기획 열린 질문 Q2]')}` : ''}</div></li>`; };
-  let h = `<div class="screen-pad"><div class="detail-top"><p class="detail-meta">${s.dist}m · ${s.checked ? `메뉴 확인일 ${s.checked} ${staleTag(s)}` : '아직 메뉴를 확인하지 않은 가게예요.'}</p>
+  let h = `<div class="screen-pad"><div class="detail-top"><p class="detail-meta">${distTxt(s)} · ${s.checked ? `메뉴 확인일 ${esc(s.checked)} ${staleTag(s)}` : '아직 메뉴를 확인하지 않은 가게예요.'}</p>
     ${s.memo ? `<p class="detail-memo">${esc(s.memo)}</p>` : ''}
     <div class="actions">${ranked.some(m => unit(m)) ? cmpBtn(s, 'detail', 'btn--primary') : ''}
-    <button class="btn" type="button" data-act="fav" data-id="${s.id}" data-from="detailfav"><span aria-hidden="true">${fav ? '★' : '☆'} </span>${fav ? '즐겨찾기 해제' : '즐겨찾기'}</button>
+    <button class="btn" type="button" data-act="fav" data-id="${esc(s.id)}" data-from="detailfav"><span aria-hidden="true">${fav ? '★' : '☆'} </span>${fav ? '즐겨찾기 해제' : '즐겨찾기'}</button>
     ${kakaoLink(s)}</div>
     <p class="screen-note">즐겨찾기는 이 폰에만 저장돼요.</p></div>`;
   if (ranked.length) h += `<h2 class="section-title">삼겹살·목살</h2><ul class="plain" role="list">${ranked.map(line).join('')}</ul>`;
@@ -397,7 +411,7 @@ function focusKey() {
 }
 function findKey(key) {
   let sel = `[data-act="${key.act}"]`;
-  if (key.id) sel += `[data-id="${key.id}"]`;
+  if (key.id) sel += `[data-id="${esc(key.id)}"]`;
   if (key.tab) sel += `[data-tab="${key.tab}"]`;
   return (key.from && document.querySelector(`${sel}[data-from="${key.from}"]`)) || document.querySelector(sel);
 }
@@ -473,7 +487,7 @@ document.addEventListener('click', e => {
     case 'menu': ST.menuOpen = !ST.menuOpen; render({ focus: ST.menuOpen ? '#menu-list button' : '#menu-btn' }); return;
     case 'admin': go('admin'); render({ focusMain: true }); return;
     case 'pin': ST.pin = ST.pin === id ? null : id; if (ST.pin && ST.sheet === 'peek') ST.sheet = 'half'; break;
-    case 'closepin': { const was = ST.pin; ST.pin = null; render({ focus: `[data-act="pin"][data-id="${was}"]` }); return; }
+    case 'closepin': { const was = ST.pin; ST.pin = null; render({ focus: `[data-act="pin"][data-id="${esc(was)}"]` }); return; }
     case 'sheet': ST.sheet = SHEET_NEXT[ST.sheet]; break;
     case 'cmp': toggleCmp(id); render({ fallback: el.dataset.from === 'chip' ? '[data-act="picker"][data-from="add"]' : '#cmp-table caption' }); return;
     case 'detail': ST.detailId = id; ST.screen = 'detail'; ST.pin = null; ST.menuOpen = false; render({ focusMain: true }); return;
@@ -483,7 +497,7 @@ document.addEventListener('click', e => {
       if (LIVE) { const a = AREAS[el.dataset.area] || AREAS.juan; ST.area = el.dataset.area; ST.where = a.name; ST.origin = { lat: a.lat, lng: a.lng }; ST.locState = '정상'; ST.mapState = '정상'; ST.pin = null; KMap.setCenter(a); }
       else ST.mapState = '정상';
       render({ focusMain: true }); return; }
-    case 'retry': if (LIVE) { startLive(); return; } ST.mapState = '정상'; render({ focusMain: true }); return;
+    case 'retry': if (LIVE) { if (ST.dbError && KMap.ready()) { ST.dbError = false; mergeDb(); render(); return; } startLive(); return; } ST.mapState = '정상'; render({ focusMain: true }); return;
     case 'login': ST.adminState = '입력'; render({ focus: '#store' }); return;
     case 'closetoast': { document.getElementById('toast').innerHTML = ''; const k = ST.toastFrom; ST.toastFrom = null; const t = k && findKey(k); (t || document.getElementById('screen')).focus(); return; }
     default: return;
@@ -559,7 +573,36 @@ function livePins() { // 화면을 다시 그린 뒤: 지도 요소를 새 자�
   const f = ST.filter;
   KMap.setPins(STORES.map(s => { const p = pinInfo(s, f); return { id: s.id, lat: s.lat, lng: s.lng, kind: p.kind, text: p.text, aria: p.aria, expanded: ST.pin === s.id }; }));
 }
-function fromPlace(p) { // 카카오 장소 → 화면용 가게 (메모리만). 가격 정보는 묶음 3에서 Supabase와 합친다
+function applyRow(s, r) { // DB에 있는 가게면 메뉴·확인일을 붙이고, 없으면 "정보 없음"
+  if (r) { s.menus = r.menus; s.gray = !r.menus.length; s.checked = r.checked; s.memo = r.memo; if (r.place_url) s.place_url = r.place_url; }
+  else { s.menus = []; s.gray = true; s.checked = null; s.memo = ''; }
+}
+let dbSeq = 0;
+async function mergeDb() {
+  if (NO_DB) return;
+  const my = ++dbSeq;
+  try {
+    const rows = await DB.storesByPlaceIds(STORES.map(s => s.id));
+    if (my !== dbSeq) return; // 그 사이 새 검색이 있었으면 버린다
+    STORES.forEach(s => applyRow(s, rows.get(s.id)));
+    ST.dbError = false;
+  } catch (e) {
+    if (my !== dbSeq) return;
+    ST.dbError = true;
+    console.warn('가격 정보 읽기 실패:', e && e.message); // 키 값은 출력하지 않는다
+  }
+  if (ST.screen === 'map') render();
+}
+async function savedOnly() { // 카카오가 안 될 때: 저장된 우리 가게만 목록으로 (좌표가 없으니 핀은 없음, D28-11)
+  if (NO_DB) { if (ST.screen === 'map') render(); return; }
+  try {
+    const rows = await DB.allStores();
+    STORES = rows.map(r => { const s = KNOWN.get(r.kakaoId) || { id: r.kakaoId, name: r.name, dist: null }; applyRow(s, r); KNOWN.set(s.id, s); return s; });
+    ST.dbError = false;
+  } catch (e) { ST.dbError = true; }
+  if (ST.screen === 'map') render();
+}
+function fromPlace(p) { // 카카오 장소 → 화면용 가게 (메모리만). 가격 정보는 mergeDb가 붙인다
   const s = KNOWN.get(p.id) || { id: p.id, name: p.place_name, place_url: p.place_url, menus: [], gray: true, checked: null, memo: '' };
   s.lat = Number(p.y); s.lng = Number(p.x);
   s.dist = Math.round(distM(ST.origin, s) / 10) * 10;
@@ -574,10 +617,11 @@ const liveHandlers = {
     if (ST.mapState === '로딩' || ST.mapState === '카카오 오류') ST.mapState = ST.locState || '정상';
     if (ST.pin && !STORES.some(s => s.id === ST.pin)) ST.pin = null;
     if (ST.screen === 'map') render(); // 포커스는 render가 그대로 지킨다
+    mergeDb();
   },
-  onError() { ST.searching = false; ST.mapState = '카카오 오류'; if (ST.screen === 'map') render(); },
+  onError() { ST.searching = false; ST.mapState = '카카오 오류'; savedOnly(); },
   onIdle() { KMap.updatePinFocus(); },
-  onPin(id) { ST.pin = ST.pin === id ? null : id; if (ST.pin && ST.sheet === 'peek') ST.sheet = 'half'; render({ focus: `[data-act="pin"][data-id="${id}"]` }); },
+  onPin(id) { ST.pin = ST.pin === id ? null : id; if (ST.pin && ST.sheet === 'peek') ST.sheet = 'half'; render({ focus: `[data-act="pin"][data-id="${esc(id)}"]` }); },
 };
 function locate() { // R2: 허용 → 내 위치 / 거부·실패 → 주안역·구월동 고르기 / 지역 밖 → 준비 중 안내 (D26-16)
   if (!navigator.geolocation) { ST.locState = '위치 거부'; ST.mapState = '위치 거부'; render(); return; }
@@ -592,13 +636,13 @@ function locate() { // R2: 허용 → 내 위치 / 거부·실패 → 주안역�
   }, { timeout: 8000, maximumAge: 600000 });
 }
 function startLive() {
-  if (!window.KMap) { ST.mapState = '카카오 오류'; render(); return; } // js/kakao.js를 못 불러온 경우
+  if (!window.KMap) { ST.mapState = '카카오 오류'; savedOnly(); return; } // js/kakao.js를 못 불러온 경우
   ST.mapState = '로딩'; render();
   KMap.init(CONFIG.KAKAO_JS_KEY, AREAS.juan, liveHandlers).then(() => {
     render(); // 지도 요소를 붙인다
     KMap.search();
     if (!ST.locAsked) { ST.locAsked = true; locate(); }
-  }).catch(() => { ST.mapState = '카카오 오류'; render(); });
+  }).catch(() => { ST.mapState = '카카오 오류'; savedOnly(); });
 }
 window.addEventListener('resize', () => { if (LIVE) { KMap.relayout(); KMap.updatePinFocus(); } });
 
