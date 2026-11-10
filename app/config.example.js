@@ -4,7 +4,7 @@
 // 3) 여기에는 "공개용 키"만 넣습니다. 브라우저에 그대로 보이는 키라서, 도메인 등록(카카오)과
 //    DB 접근 규칙(Supabase RLS)으로 지킵니다. Supabase service_role 키 같은 "비밀 키"는 절대 넣지 마세요.
 window.APP_CONFIG = {
-  // 카카오 개발자(developers.kakao.com) > 내 애플리케이션 > 앱 선택 > 앱 키 > "JavaScript 키"
+  // 카카오 개발자(developers.kakao.com) > 내 애플리케이션 > 앱 선택 > [플랫폼 키] > "JavaScript 키"
   KAKAO_JS_KEY: '',
 
   // Supabase(supabase.com) > 프로젝트 > Project Settings > API > "Project URL"

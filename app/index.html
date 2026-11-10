@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2E2724">
+<title>고기 레이더</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#screen">본문으로 건너뛰기</a>
+
+<div class="app">
+  <header class="appbar">
+    <button class="btn btn--quiet btn--on-dark" id="back" type="button" hidden><span aria-hidden="true">←</span> <span id="back-label">목록으로</span></button>
+    <h1 class="appbar__title">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="5.5" /><path d="M12 12 L19.5 5.5" /><circle cx="17" cy="9" r="1.6" class="mark__dot" /></svg>
+      <span id="title" translate="no">고기 레이더</span>
+    </h1>
+    <span class="where" id="where"></span>
+    <div class="menu">
+      <!-- 펼침 방식(disclosure): aria-expanded만 쓴다. role="menu"가 아니므로 aria-haspopup은 쓰지 않는다 -->
+      <button class="menu__btn" id="menu-btn" type="button" aria-expanded="false" data-act="menu"><span aria-hidden="true">⋯</span><span class="sr-only">메뉴</span></button>
+      <ul class="menu__list" id="menu-list" hidden>
+        <li><button type="button" data-act="admin">운영자 입력</button></li>
+      </ul>
+    </div>
+  </header>
+  <main id="screen" class="screen" tabindex="-1"></main>
+  <nav class="tabbar" aria-label="주요 화면">
+    <button type="button" data-act="tab" data-tab="map">지도·목록</button>
+    <button type="button" data-act="tab" data-tab="cmp" id="tab-cmp">비교</button>
+    <button type="button" data-act="tab" data-tab="fav" id="tab-fav">즐겨찾기</button>
+  </nav>
+</div>
+<div class="toast" role="status" aria-live="polite" id="toast"></div>
+
+<!-- 키: config.js (config.example.js를 복사해서 만든다, git 제외). 없으면 설정 안내 화면이 뜬다 -->
+<script src="config.js"></script>
+<script src="js/calc.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

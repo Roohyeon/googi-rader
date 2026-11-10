@@ -53,8 +53,8 @@
 
 ## 사용자가 할 일 (순서대로, 3단계 묶음 1 전에)
 1. **카카오 개발자 가입·앱 만들기:** https://developers.kakao.com → 로그인 → 상단 "내 애플리케이션" → "애플리케이션 추가하기" → 앱 이름 "고기 레이더" 입력 → 저장
-2. **JavaScript 키 복사:** 만든 앱 → "앱 키" → **JavaScript 키** 복사 → `app/config.js`의 `KAKAO_JS_KEY` 칸에 붙여 넣기 (REST API 키, Admin 키는 쓰지 않음)
-3. **사이트 도메인 등록:** 앱 → "플랫폼" → "Web 플랫폼 등록" → 사이트 도메인에 `http://localhost:3000` 입력(로컬 실행 주소, 배포 주소는 5단계에서 추가)
+2. **JavaScript 키 복사:** 만든 앱 → [앱] > [플랫폼 키] > **JavaScript 키** 복사 (예전 메뉴 이름: "앱 키") → `app/config.js`의 `KAKAO_JS_KEY` 칸에 붙여 넣기 (REST API 키, Admin 키는 쓰지 않음)
+3. **도메인 등록:** [앱] > [플랫폼 키] > [JavaScript 키] → **JavaScript SDK 도메인**(예전 이름: 플랫폼 > Web > 사이트 도메인)에 `http://localhost:3000` 입력(로컬 실행 주소, 배포 주소는 5단계에서 추가)
 4. **카카오맵 사용 설정:** 앱 → "카카오맵"(또는 제품 설정) 메뉴에서 사용 설정을 켬 (2024년 이후 생성 앱은 활성화가 필요하다는 공지 있음 — 화면 이름은 바뀔 수 있음)
 5. **Supabase 가입·프로젝트 만들기:** https://supabase.com → GitHub 계정 등으로 가입 → "New project" → 이름 `googi-radar`, 비밀번호 저장, 지역은 가까운 곳(예: Northeast Asia (Seoul)) → 생성
 6. **Supabase 키 복사:** 프로젝트 → "Project Settings" → "API" → **Project URL**을 `SUPABASE_URL`에, **anon public** 키를 `SUPABASE_ANON_KEY`에 붙여 넣기 (**service_role 키는 복사하지 않음**)
