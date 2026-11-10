@@ -75,28 +75,61 @@ window.DB = (function () {
 
   // 가게가 처음이면 만들고(있으면 이름·확인일·상권 갱신), 메뉴 1개를 추가하고, 사진이 있으면 비공개 저장소에 올린다.
   // 실제로 막는 것은 DB 규칙(RLS): 운영자 계정이 아니면 여기서 오류가 난다.
-  async function saveMenu(store, menu, file) {
+  async function saveMenus(store, menus, file) {
     if (!client) throw new Error('not-ready');
     if (!/^[0-9]{1,20}$/.test(store.kakaoId)) throw new Error('bad-place');
     const row = { kakao_place_id: store.kakaoId, name: String(store.name).slice(0, 100), place_url: 'https://place.map.kakao.com/' + store.kakaoId, area: store.area, checked_at: store.checked };
     if (store.memo) row.memo = store.memo; // 비워 두면 예전 메모를 지우지 않는다
     const { data: st, error: e1 } = await client.from('stores').upsert(row, { onConflict: 'kakao_place_id' }).select('id').single();
     if (e1) throw e1;
-    const { error: e2 } = await client.from('menus').insert({
-      store_id: st.id, name: menu.name, part: menu.part, kind: menu.type, aged: !!menu.aged, origin: menu.origin,
-      price_per_100g: menu.p100, weight_g: menu.w, price: menu.price,
-    });
+    if (!menus.length || menus.length > 20) throw new Error('bad-menus');
+    const { error: e2 } = await client.from('menus').insert(menus.map(menu => ({ store_id: st.id, ...menuFields(menu) }))); // 한 번에 넣는다: 하나라도 틀리면 전부 안 들어감
     if (e2) throw e2;
-    let photoFailed = false;
-    if (file) {
-      const path = `${store.kakaoId}/${Date.now()}.${PHOTO_TYPES[file.type]}`;
-      const { error: e3 } = await client.storage.from('menu-photos').upload(path, file, { contentType: file.type, upsert: false });
-      if (e3) photoFailed = true;
-      else { const { error: e4 } = await client.from('stores').update({ photo_path: path }).eq('id', st.id); if (e4) photoFailed = true; }
+    const photoFailed = await uploadPhoto(st.id, store.kakaoId, file);
+    cache.delete(store.kakaoId);
+    return { photoFailed };
+  }
+  const menuFields = menu => ({ name: menu.name, part: menu.part, kind: menu.type, aged: !!menu.aged, origin: menu.origin, price_per_100g: menu.p100, weight_g: menu.w, price: menu.price });
+  async function uploadPhoto(storeId, kakaoId, file) { // 실패해도 메뉴 저장은 그대로 둔다 → true를 돌려 알린다
+    if (!file) return false;
+    const path = `${kakaoId}/${Date.now()}.${PHOTO_TYPES[file.type]}`;
+    const { error: e3 } = await client.storage.from('menu-photos').upload(path, file, { contentType: file.type, upsert: false });
+    if (e3) return true;
+    const { error: e4 } = await client.from('stores').update({ photo_path: path }).eq('id', storeId);
+    return !!e4;
+  }
+  // 이미 입력한 가게 고치기: 가게 정보 갱신 → 뺀 메뉴 삭제 → 있던 메뉴 수정 → 새 메뉴 추가
+  async function updateMenus(store, menus, removedIds, file) {
+    if (!client) throw new Error('not-ready');
+    if (!/^[0-9]{1,20}$/.test(store.kakaoId)) throw new Error('bad-place');
+    if (!menus.length || menus.length > 20) throw new Error('bad-menus');
+    const uuid = /^[0-9a-f-]{36}$/;
+    const row = { name: String(store.name).slice(0, 100), area: store.area, checked_at: store.checked, memo: store.memo || null };
+    const { data: st, error: e1 } = await client.from('stores').update(row).eq('kakao_place_id', store.kakaoId).select('id').single();
+    if (e1) throw e1;
+    const gone = removedIds.filter(id => uuid.test(id));
+    if (gone.length) { const { error } = await client.from('menus').delete().eq('store_id', st.id).in('id', gone); if (error) throw error; }
+    for (const m of menus.filter(m => m.id && uuid.test(m.id))) {
+      const { error } = await client.from('menus').update(menuFields(m)).eq('id', m.id).eq('store_id', st.id);
+      if (error) throw error;
     }
+    const fresh = menus.filter(m => !m.id);
+    if (fresh.length) { const { error } = await client.from('menus').insert(fresh.map(m => ({ store_id: st.id, ...menuFields(m) }))); if (error) throw error; }
+    const photoFailed = await uploadPhoto(st.id, store.kakaoId, file);
     cache.delete(store.kakaoId);
     return { photoFailed };
   }
 
-  return { init, ready, storesByPlaceIds, allStores, session, onAuth, signIn, signOut, photoProblem, saveMenu };
+  // 운영자에게만: 저장된 메뉴판 사진을 10분 동안만 열리는 주소로 받는다 (저장소는 비공개 그대로)
+  async function photoUrl(kakaoId) {
+    if (!client) throw new Error('not-ready');
+    const { data, error } = await client.from('stores').select('photo_path').eq('kakao_place_id', kakaoId).maybeSingle();
+    if (error) throw error;
+    if (!data || !data.photo_path) return null;
+    const { data: s, error: e2 } = await client.storage.from('menu-photos').createSignedUrl(data.photo_path, 600);
+    if (e2) throw e2;
+    return s.signedUrl;
+  }
+
+  return { init, ready, storesByPlaceIds, allStores, session, onAuth, signIn, signOut, photoProblem, saveMenus, updateMenus, photoUrl };
 })();

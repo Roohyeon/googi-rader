@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#2E2724">
 <!-- 보안 정책(CSP): 이 목록에 있는 곳의 스크립트·연결만 허용한다. 새 외부 서비스를 붙이면 여기에 추가해야 동작한다.
      카카오 주소는 앞에 https:를 안 붙였다: 카카오 SDK가 페이지와 같은 방식(로컬 http / 배포 https)으로 파일을 불러오기 때문 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' dapi.kakao.com t1.daumcdn.net t1.kakaocdn.net; connect-src 'self' https://*.supabase.co dapi.kakao.com; img-src 'self' data: blob: *.daumcdn.net *.kakao.com *.kakaocdn.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src https://cdn.jsdelivr.net https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' dapi.kakao.com t1.daumcdn.net t1.kakaocdn.net; connect-src 'self' https://*.supabase.co dapi.kakao.com; img-src 'self' data: blob: *.daumcdn.net *.kakao.com *.kakaocdn.net https://*.supabase.co; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src https://cdn.jsdelivr.net https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>고기 레이더</title>
 <link rel="icon" href="data:,">
@@ -44,6 +44,7 @@
   </nav>
 </div>
 <div class="toast" role="status" aria-live="polite" id="toast"></div>
+<p class="sr-only" aria-live="polite" id="announce"></p>
 
 <!-- 키: config.js (config.example.js를 복사해서 만든다, git 제외). 없으면 설정 안내 화면이 뜬다 -->
 <script src="config.js"></script>

@@ -105,7 +105,7 @@ window.KMap = (function () {
   function updatePinFocus() {
     if (!map || !el.isConnected) return;
     const proj = map.getProjection(), mr = el.getBoundingClientRect();
-    const bar = document.querySelector('.filterbar'), sheet = document.getElementById('sheet');
+    const bar = document.querySelector('.ftabs'), sheet = document.getElementById('sheet');
     const top = bar ? bar.getBoundingClientRect().bottom - mr.top : 0;
     const bottom = sheet ? sheet.getBoundingClientRect().top - mr.top : mr.height;
     overlays.forEach(({ b, pos }) => {
@@ -116,5 +116,16 @@ window.KMap = (function () {
     });
   }
 
-  return { init, ready, mount, relayout, setCenter, getCenter, search, setPins, updatePinFocus };
+  // 운영자: 이름으로 가게 찾기 (음식점만, 지금 지도 중심에서 가까운 순으로 20km 안)
+  function findPlaces(q, center) {
+    return new Promise((resolve, reject) => {
+      if (!map) { reject(new Error('not-ready')); return; }
+      const k = window.kakao.maps, S = k.services.Status;
+      new k.services.Places().keywordSearch(String(q).slice(0, 50), (data, status) => {
+        if (status === S.OK) resolve(data); else if (status === S.ZERO_RESULT) resolve([]); else reject(new Error('search'));
+      }, { category_group_code: 'FD6', location: new k.LatLng(center.lat, center.lng), radius: 20000, sort: k.services.SortBy.ACCURACY });
+    });
+  }
+
+  return { init, ready, mount, relayout, setCenter, getCenter, search, setPins, updatePinFocus, findPlaces };
 })();
